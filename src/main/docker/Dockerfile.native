@@ -26,4 +26,6 @@ COPY --chown=1001:root --chmod=0755 build/*-runner /work/application
 EXPOSE 8080
 USER 1001
 
-ENTRYPOINT ["./application", "-Dquarkus.http.host=0.0.0.0"]
+# -Dvertx.disableDnsResolver=true forces the OS resolver (which goes through
+# AdGuard) instead of Vert.x's default async Netty DNS resolver, which bypasses it.
+ENTRYPOINT ["./application", "-Dquarkus.http.host=0.0.0.0", "-Dvertx.disableDnsResolver=true"]

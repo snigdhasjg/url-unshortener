@@ -2,18 +2,18 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project status
+## Project
 
-This is a freshly scaffolded Quarkus application named `unshortener` (group `com.snigji`). As of now, `src/main/java` and `src/main/resources/application.properties` are empty — no application code, REST endpoints, or tests exist yet. There is no git repository initialized in this directory.
+`unshortener` is a self-hosted URL-unshortener API (Quarkus, Java 25, group `com.snigji`). Given a shortened URL it walks the redirect chain and reports the final destination plus the hops taken, under a hard 5-second response ceiling. Full design intent, rationale, and constraints live in `plan.md` at the repo root — read it before making non-trivial changes to the resolver, caching, or API contract; this file only covers what a contributor needs to start working.
 
 ## Commands
 
 Build and run:
 ```shell
-./gradlew quarkusDev          # run in dev mode with live reload; Dev UI at http://localhost:8080/q/dev/
+./gradlew quarkusDev          # dev mode with live reload; Dev UI at http://localhost:8080/q/dev/
 ./gradlew build                # compile, test, and package -> build/quarkus-app/quarkus-run.jar
 ./gradlew test                 # run tests
-./gradlew test --tests "com.snigji.SomeTest"   # run a single test class
+./gradlew test --tests "com.snigji.unshortener.resolver.UrlNormalizerTest"   # single test class
 ```
 
 Run the packaged app:
@@ -27,18 +27,35 @@ java -jar build/quarkus-app/quarkus-run.jar
 java -jar build/*-runner.jar
 ```
 
-Native executable (requires GraalVM, or use `-container-build` to build in a container instead):
+Native executable (requires GraalVM, or `-container-build` to build in a container instead). Not yet exercised in this repo — see "Not yet done" below:
 ```shell
 ./gradlew build -Dquarkus.native.enabled=true
 ./gradlew build -Dquarkus.native.enabled=true -Dquarkus.native.container-build=true
 ./build/unshortener-1.0.0-SNAPSHOT-runner
 ```
 
-Docker images (build the jar with `./gradlew build` first): Dockerfiles for JVM, legacy-jar, native, and native-micro variants live in `src/main/docker/`.
+Docker images (build the jar with `./gradlew build` first): Dockerfiles for JVM, legacy-jar, native, and native-micro variants live in `src/main/docker/`. All four set `-Dvertx.disableDnsResolver=true` at the JVM/binary level, not in `application.properties` — Vert.x reads that flag via `System.getProperty` during init, before Quarkus config is loaded.
+
+## Build system
+
+Gradle (Kotlin DSL) with the Quarkus Gradle plugin (`build.gradle.kts`, `settings.gradle.kts`, `gradle.properties`). Quarkus platform/plugin versions are pinned in `gradle.properties` (currently 3.39.4) and should be updated there, not per-dependency. Java 25, with `-parameters` enabled at compile time (needed for Quarkus JAX-RS/CDI parameter reflection).
+
+Extensions: `quarkus-rest-jackson`, `quarkus-smallrye-health`, `quarkus-cache`, `quarkus-vertx`, `quarkus-arc`. Outbound HTTP is the **Vert.x WebClient** (`smallrye-mutiny-vertx-web-client`) — deliberately not a Quarkus extension; `quarkus-vertx` only supplies the managed `Vertx` instance. Import the Mutiny variant (`io.vertx.mutiny.ext.web.client.*`, including `io.vertx.mutiny.core.buffer.Buffer` — not the plain `io.vertx.core.buffer.Buffer`, which won't type-check against a Mutiny `HttpRequest`/`HttpResponse`).
 
 ## Architecture
 
-- Build system: Gradle (Kotlin DSL) with the Quarkus Gradle plugin (`build.gradle.kts`, `settings.gradle.kts`, `gradle.properties`). Quarkus platform/plugin versions are pinned in `gradle.properties` (currently 3.39.4) and should be updated there, not per-dependency.
-- Java 25 (`sourceCompatibility`/`targetCompatibility`), with `-parameters` enabled at compile time (needed for Quarkus JAX-RS/CDI parameter reflection).
-- Extensions currently in use: `quarkus-rest-jackson` (REST + JSON), `quarkus-smallrye-health` (health checks), `quarkus-cache`, `quarkus-vertx`, `quarkus-arc` (CDI). Add new capabilities via Quarkus extensions in `build.gradle.kts` rather than pulling in unrelated libraries directly.
-- Since there is no source yet, there is no established package layout or endpoint structure to follow — the first REST resources, services, and config should establish the convention for what follows.
+One resolver, one cache, one code path, two projections of it:
+
+- **`domain/`** — the wire model. `Destination` is a sealed interface (`Web`/`AppIntent`/`Store`/`Unresolved`) serialized by Jackson via runtime type, no discriminator. `Status`/`StopReason`/`HopVia` are enums with `@JsonValue` for their snake_case wire form. `quarkus.jackson.property-naming-strategy=SNAKE_CASE` (application.properties) handles record field names; it does not affect enum constants, hence the explicit `@JsonValue`.
+- **`resolver/`** — `RedirectResolver` recursively walks one hop at a time (`WebClient.followRedirects(false)` — never auto-follow), carrying one absolute deadline in `WalkState` (`ResolverLimits`: 4800ms resolver budget, 1500ms per-hop cap, 400ms floor, 10 max hops, 64KB body cap). `UrlNormalizer`, `MetaRefreshScanner`, `JsRedirectDetector`, and `IntentUrlParser` are pure/static and unit-tested without any server. `CookieJar` is per-`WalkState` (never shared) and scopes by the `Set-Cookie` `Domain` attribute only — not full RFC 6265.
+- **`cache/`** — `WholeWalkCache` (L1, whole result) and `EdgeCache` (L2, per-hop, makes partial results resumable) are each a pair of plain Caffeine caches (success: 7d, failure: 5min), not `@CacheResult` — Quarkus's Caffeine config only supports one static TTL per named cache, and `@CacheResult` doesn't cache exceptions anyway (the resolver never throws on failure; a failure is always a normal `Result`). A hop whose response carried `Set-Cookie` is marked non-cacheable and never enters `EdgeCache` — replaying it from cache would silently skip that cookie on a later walk. On an `EdgeCache` hit, the cached hop's `via` field is overridden with the current walk's `via` — it's a walk-relative fact, not a property of the target URL (this was a real bug caught by cross-test cache reuse; see `RedirectResolverTest`).
+- **`ua/`** — named UA profiles via `@ConfigMapping` (`UaProfilesConfig`), not hardcoded strings. The `Map<String, Profile>` field needs `@WithParentName` to flatten under the `ua-profiles` prefix instead of nesting under the accessor's own name — easy to get wrong, cost a debugging round-trip once already.
+- **`security/`** — `Guard` interface (`checkUrl`/`checkIp`) is a deliberate stub (`AllowAllGuard`); this service fetches attacker-controlled URLs from inside a home LAN, so the hook must stay structural even though there's no real policy yet. `checkIp` is never actually called with a real address — the WebClient resolves-and-connects in one step, so pinning the IP between DNS check and connect needs a custom address resolver, not implemented.
+- **`service/`** — `ResolverService` is the shared facade: normalizes input, checks the L1 cache, calls `RedirectResolver`, and provides `hardCutoffFallback` for the resource-level defense-in-depth timeout (should never fire; logs at WARN if it does, since it means the resolver's own deadline arithmetic has a bug). `UnshortenMapper` projects a `Result` onto the compat shape — deep-link-aware (`AppIntent.fallback` → Play Store URL for `Store` → raw scheme, in that order).
+- **`rest/`** — `ResolveResource` (`/api/v1/resolve`, rich) and `UnshortenResource` (`/api/v2/unshorten`, unshorten.me-compatible: same path as theirs, versioned independently from ours on purpose, profile hardcoded to `android`, malformed input still returns 200 with `success:false` rather than 400) both call `ResolverService` only — never duplicate resolution logic in a resource. `HealthzResource` is a plain `/healthz`, separate from `quarkus-smallrye-health`'s `/q/health`.
+
+`Status.from(stopReason, anyHopCompleted)` is the one place that decides `resolved`/`partial`/`failed`; a transport/DNS error is `failed` only if it happened before any earlier hop succeeded, otherwise `partial` with the last good hop as `final_url` — this reading favors the rich API's own definition ("failed = couldn't complete even the first hop") over a stricter blanket rule the compat-endpoint section of `plan.md` could also support. If you touch this, re-read that section of the plan first.
+
+## Not yet done
+
+Tracked as gaps rather than silently missing: `Hop.remoteIp` is always `null` (Vert.x's `WebClient` response doesn't expose the underlying connection without dropping to raw `HttpClient`); gzip-bomb protection is a `Range` header plus post-fetch truncation, not a true streaming cap; native-image build and its checklist (HTTPS truststore, DNS-resolver-disable verified via AdGuard logs, JSON round-trip, JDK/Mandrel version match) haven't been run — needs GraalVM/Mandrel and is best done on the target homelab hardware. Metrics (`micrometer-registry-prometheus`) intentionally omitted per `plan.md`, which marks it optional.

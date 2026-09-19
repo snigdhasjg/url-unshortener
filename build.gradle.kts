@@ -19,7 +19,14 @@ dependencies {
     implementation("io.quarkus:quarkus-cache")
     implementation("io.quarkus:quarkus-vertx")
     implementation("io.quarkus:quarkus-arc")
+
+    // Vert.x WebClient — deliberately not a Quarkus extension.
+    // quarkus-vertx supplies the Vertx instance only. Version is managed by the
+    // Quarkus platform BOM, so versionless is correct. Do not "fix" either of these.
+    implementation("io.smallrye.reactive:smallrye-mutiny-vertx-web-client")
+
     testImplementation("io.quarkus:quarkus-junit")
+    testImplementation("io.rest-assured:rest-assured")
 }
 
 group = "com.snigji"
