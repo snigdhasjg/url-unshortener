@@ -19,6 +19,7 @@ dependencies {
     implementation("io.quarkus:quarkus-cache")
     implementation("io.quarkus:quarkus-vertx")
     implementation("io.quarkus:quarkus-arc")
+    implementation("io.quarkus:quarkus-config-yaml")
 
     // Vert.x WebClient — deliberately not a Quarkus extension.
     // quarkus-vertx supplies the Vertx instance only. Version is managed by the
