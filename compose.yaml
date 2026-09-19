@@ -1,0 +1,24 @@
+services:
+  unshortener:
+    # Build the jar first: ./gradlew build
+    build:
+      context: .
+      dockerfile: src/main/docker/Dockerfile.jvm
+    image: unshortener:latest
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    # HTTPS on 443 is opt-in: mount a PEM cert+key and point Quarkus at them.
+    # With neither set, the container serves plain HTTP on 80 only.
+    # volumes:
+    #   - ./certs:/etc/unshortener/tls:ro
+    # environment:
+    #   QUARKUS_HTTP_SSL_CERTIFICATE_FILES: /etc/unshortener/tls/tls.crt
+    #   QUARKUS_HTTP_SSL_CERTIFICATE_KEY_FILES: /etc/unshortener/tls/tls.key
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/q/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

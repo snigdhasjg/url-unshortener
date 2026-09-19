@@ -61,11 +61,11 @@ class ApiEndpointsTest {
     }
 
     @Test
-    void healthzReportsOk() {
+    void healthReportsUp() {
         RestAssured.given()
-                .when().get("/healthz")
+                .when().get("/q/health")
                 .then().statusCode(200)
-                .body("status", equalTo("ok"));
+                .body("status", equalTo("UP"));
     }
 
     @Test

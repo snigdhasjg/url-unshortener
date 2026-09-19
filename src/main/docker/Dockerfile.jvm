@@ -11,16 +11,25 @@
 #
 # Then run the container using:
 #
-# docker run -i --rm -p 8080:8080 quarkus/unshortener-jvm
+# docker run -i --rm -p 80:80 -p 443:443 quarkus/unshortener-jvm
+#
+# HTTPS on 443 is opt-in: mount a PEM cert+key and point Quarkus at them. With
+# neither set, the container serves plain HTTP on 80 only.
+#
+# docker run -i --rm -p 80:80 -p 443:443 \
+#   -v /srv/certs:/etc/unshortener/tls:ro \
+#   -e QUARKUS_HTTP_SSL_CERTIFICATE_FILES=/etc/unshortener/tls/tls.crt \
+#   -e QUARKUS_HTTP_SSL_CERTIFICATE_KEY_FILES=/etc/unshortener/tls/tls.key \
+#   quarkus/unshortener-jvm
 #
 # If you want to include the debug port into your docker image
-# you will have to expose the debug port (default 5005 being the default) like this :  EXPOSE 8080 5005.
+# you will have to expose the debug port (default 5005 being the default) like this :  EXPOSE 80 5005.
 # Additionally you will have to set -e JAVA_DEBUG=true and -e JAVA_DEBUG_PORT=*:5005
 # when running the container
 #
 # Then run the container using :
 #
-# docker run -i --rm -p 8080:8080 quarkus/unshortener-jvm
+# docker run -i --rm -p 80:80 -p 5005:5005 quarkus/unshortener-jvm
 #
 # This image uses the `run-java.sh` script to run the application.
 # This scripts computes the command line to execute your Java application, and
@@ -91,13 +100,23 @@ COPY --chown=185 build/quarkus-app/*.jar /deployments/
 COPY --chown=185 build/quarkus-app/app/ /deployments/app/
 COPY --chown=185 build/quarkus-app/quarkus/ /deployments/quarkus/
 
-EXPOSE 8080
+EXPOSE 80 443
 USER 185
+# 80/443 as ENV (not -D): SmallRye ranks sysprops above env vars, so baking
+# these in as -D would make a matching `docker run -e QUARKUS_HTTP_...`
+# silently ineffective. ssl-port is harmless to set unconditionally — with no
+# certificate configured, the HTTPS listener just never opens (see the run
+# examples above for enabling it via QUARKUS_HTTP_SSL_CERTIFICATE_FILES /
+# ..._KEY_FILES). insecure-requests=enabled in application.yml ensures 80 is
+# never redirected to 443.
+ENV QUARKUS_HTTP_HOST="0.0.0.0"
+ENV QUARKUS_HTTP_PORT="80"
+ENV QUARKUS_HTTP_SSL_PORT="443"
 # -Dvertx.disableDnsResolver=true forces the OS resolver (which goes through
 # AdGuard) instead of Vert.x's default async Netty DNS resolver, which bypasses
 # it. Must be a JVM system property at startup, not application.properties —
 # Vert.x reads it via System.getProperty during init, before config is loaded.
-ENV JAVA_OPTS_APPEND="-Dquarkus.http.host=0.0.0.0 -Djava.util.logging.manager=org.jboss.logmanager.LogManager -Dvertx.disableDnsResolver=true"
+ENV JAVA_OPTS_APPEND="-Djava.util.logging.manager=org.jboss.logmanager.LogManager -Dvertx.disableDnsResolver=true"
 ENV JAVA_APP_JAR="/deployments/quarkus-run.jar"
 
 ENTRYPOINT [ "/opt/jboss/container/java/run/run-java.sh" ]

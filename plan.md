@@ -168,7 +168,7 @@ registration is mostly unnecessary.
 ```
 GET /api/v1/resolve?url=<encoded>&profile=android     # rich
 GET /api/v2/unshorten?url=<encoded>                   # unshorten.me-compatible
-GET /healthz
+GET /q/health                                         # MicroProfile Health (quarkus-smallrye-health)
 ```
 
 **The two endpoints share one resolver, one cache, one code path.** The compat endpoint

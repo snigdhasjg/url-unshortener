@@ -19,7 +19,7 @@ Dev UI: <http://localhost:8080/q/dev/>.
 ```
 GET /api/v1/resolve?url=<encoded>&profile=android     # rich
 GET /api/v2/unshorten?url=<encoded>                    # unshorten.me-compatible
-GET /healthz
+GET /q/health                                          # MicroProfile Health (quarkus-smallrye-health)
 ```
 
 ## Build

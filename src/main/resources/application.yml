@@ -4,6 +4,11 @@
 quarkus:
   jackson:
     property-naming-strategy: SNAKE_CASE
+  http:
+    # Plain HTTP and HTTPS serve side by side; :80 is never redirected to :443.
+    # This is the Quarkus default today, but it silently flips to `disabled` if
+    # client-auth is ever set to `required` — pinned so that can't quietly kill :80.
+    insecure-requests: enabled
 
 resolver:
   default-profile: android
