@@ -158,8 +158,14 @@ sealed interface Destination {
 ```
 
 `Hop` and `Result` as records — serialize to JSON with no boilerplate. Quarkus 3.37+
-has reflection-free Jackson serializers on by default, so native-image reflection
-registration is mostly unnecessary.
+has reflection-free Jackson serializers on by default, generated from a resource
+method's declared return type — but that only helps if the method returns the DTO
+type directly. `ResolveResource`/`UnshortenResource` return `Uni<Response>` (needed
+for per-response `Cache-Control` headers), which erases the body type and defeats
+that inference. In native builds this means every type reachable from a JSON
+response body needs manual `@RegisterForReflection` — see `NativeReflectionConfig`
+in `domain/`. Found by actually running a container-build native binary, not by
+inspection; do the same before trusting any change near the wire model in native.
 
 ---
 
@@ -412,12 +418,16 @@ Not now, but don't design it out.
 
 Verify these in the built binary, not just dev mode:
 
-- [ ] HTTPS works outbound — check `quarkus.native.enable-https-url-handler` and the
-  truststore. Classic failure: everything works in `quarkus dev`, every outbound
-  HTTPS call fails in native. Smoke-test day one.
+- [x] HTTPS works outbound — `quarkus.native.enable-https-url-handler=true` is set in
+  `application.yml`. Without it, native-image doesn't register the `https` URL protocol
+  handler and every outbound HTTPS fetch throws `MalformedURLException` at runtime
+  (`Accessing a URL protocol that was not enabled`) — hit and confirmed fixed via a
+  container-build native run. Still smoke-test the truststore on the target hardware.
 - [ ] `-Dvertx.disableDnsResolver=true` is actually taking effect (confirm via AdGuard logs)
 - [ ] `networkaddress.cache.ttl` set explicitly — defaults differ under native-image
-- [ ] JSON serialization of records and the sealed hierarchy round-trips
+- [x] JSON serialization of records and the sealed hierarchy round-trips — required
+  `NativeReflectionConfig` (see above); confirmed against real requests on both
+  endpoints, including the sealed `Destination` hierarchy and enum wire values.
 - [ ] Build JDK and Mandrel JDK versions match (both 25)
 
 ---

@@ -27,10 +27,10 @@ java -jar build/quarkus-app/quarkus-run.jar
 java -jar build/*-runner.jar
 ```
 
-Native executable (requires GraalVM, or `-container-build` to build in a container instead). Not yet exercised in this repo — see "Not yet done" below:
+Native executable (requires GraalVM, or `-container-build` to build in a container instead). `-Dquarkus.package.jar.enabled=false` is required alongside `-Dquarkus.native.enabled=true` — without it the build fails with "Outputting both native and JAR packages is not currently supported" (the CI workflow already does this; see `.github/workflows/build.yml`):
 ```shell
-./gradlew build -Dquarkus.native.enabled=true
-./gradlew build -Dquarkus.native.enabled=true -Dquarkus.native.container-build=true
+./gradlew build -Dquarkus.native.enabled=true -Dquarkus.package.jar.enabled=false
+./gradlew build -Dquarkus.native.enabled=true -Dquarkus.package.jar.enabled=false -Dquarkus.native.container-build=true
 ./build/unshortener-1.0.0-SNAPSHOT-runner
 ```
 
@@ -58,4 +58,4 @@ One resolver, one cache, one code path, two projections of it:
 
 ## Not yet done
 
-Tracked as gaps rather than silently missing: `Hop.remoteIp` is always `null` (Vert.x's `WebClient` response doesn't expose the underlying connection without dropping to raw `HttpClient`); gzip-bomb protection is a `Range` header plus post-fetch truncation, not a true streaming cap; native-image build and its checklist (HTTPS truststore, DNS-resolver-disable verified via AdGuard logs, JSON round-trip, JDK/Mandrel version match) haven't been run — needs GraalVM/Mandrel and is best done on the target homelab hardware. Metrics (`micrometer-registry-prometheus`) intentionally omitted per `plan.md`, which marks it optional.
+Tracked as gaps rather than silently missing: `Hop.remoteIp` is always `null` (Vert.x's `WebClient` response doesn't expose the underlying connection without dropping to raw `HttpClient`); gzip-bomb protection is a `Range` header plus post-fetch truncation, not a true streaming cap. Native-image build has now been exercised via container-build and produces a working binary — `-Dquarkus.package.jar.enabled=false` is required alongside `-Dquarkus.native.enabled=true` (see Commands above), and two build-time gaps were found and fixed: `quarkus.native.enable-https-url-handler=true` (`application.yml`) — without it every outbound HTTPS fetch throws `MalformedURLException`; and `NativeReflectionConfig` (`domain/`) registering the whole JSON response graph for reflection — `ResolveResource`/`UnshortenResource` return `Uni<Response>` for per-response headers, which defeats Quarkus's build-time reflection-free Jackson serializer generation (it needs a concretely-typed return value), so every DTO reachable from a response body needs manual `@RegisterForReflection`. Still open: DNS-resolver-disable verified via AdGuard logs, and a JDK/Mandrel version match check — best done on the target homelab hardware. Metrics (`micrometer-registry-prometheus`) intentionally omitted per `plan.md`, which marks it optional.
