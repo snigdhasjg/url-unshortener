@@ -15,12 +15,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-env:
-  IMAGE_DESCRIPTION: >-
-    Self-hosted URL unshortener. Given a shortened URL, walks the redirect
-    chain and reports the final destination plus the hops taken, under a
-    5-second ceiling.
-
 jobs:
   version:
     name: Version
@@ -47,11 +41,17 @@ jobs:
           minor_pattern: "/FEAT:|FEATURE:|MINOR:/i"
           bump_each_commit: true
 
-  test:
-    name: Test
+  build:
+    name: Build and publish
     runs-on: ubuntu-26.04
     needs:
       - version
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
     steps:
       - name: Clone the code
         uses: actions/checkout@v7
@@ -78,37 +78,6 @@ jobs:
           path: build/reports/tests/test
           retention-days: 7
 
-  build:
-    name: Build and publish
-    runs-on: ubuntu-26.04
-    needs:
-      - version
-      - test
-    if: github.event_name == 'push'
-    timeout-minutes: 30
-    permissions:
-      contents: write
-      packages: write
-      id-token: write
-      attestations: write
-    steps:
-      - name: Clone the code
-        uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-          fetch-depth: 1
-          ref: ${{ needs.version.outputs.commit }}
-
-      - name: Set up JDK 25
-        uses: actions/setup-java@v6
-        with:
-          distribution: temurin
-          java-version: "25"
-          cache: gradle
-
-      - name: Build the jar
-        run: ./gradlew build -x test --no-daemon
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
@@ -119,9 +88,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # The jar is arch-independent and Dockerfile.jvm has no RUN steps, so a
-      # single buildx call produces a proper multi-arch manifest list directly —
-      # no per-arch runner matrix or digest-merge step needed.
+      - name: Determine image tags
+        id: tags
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            sha="${{ needs.version.outputs.commit }}"
+            echo "tags=ghcr.io/${{ github.repository }}:sha-${sha:0:7}" >> "$GITHUB_OUTPUT"
+          else
+            {
+              echo "tags<<EOF"
+              echo "ghcr.io/${{ github.repository }}:${{ needs.version.outputs.version }}"
+              echo "ghcr.io/${{ github.repository }}:latest"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build and push image
         id: build
         uses: docker/build-push-action@v7
@@ -131,11 +112,9 @@ jobs:
           platforms: linux/amd64,linux/arm64
           provenance: true
           sbom: true
-          tags: |
-            ghcr.io/${{ github.repository }}:${{ needs.version.outputs.version }}
-            ghcr.io/${{ github.repository }}:latest
+          tags: ${{ steps.tags.outputs.tags }}
           labels: |
-            org.opencontainers.image.description=${{ env.IMAGE_DESCRIPTION }}
+            org.opencontainers.image.description=Self-hosted URL unshortener. Given a shortened URL, walk the redirect chain and report the final destination plus the full path taken.
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.licenses=MPL-2.0
             org.opencontainers.image.title=unshortener
@@ -145,6 +124,7 @@ jobs:
           push: true
 
       - name: Attest image
+        if: github.event_name == 'push'
         uses: actions/attest@v4
         with:
           subject-name: ghcr.io/${{ github.repository }}
@@ -152,6 +132,7 @@ jobs:
           push-to-registry: true
 
       - name: Create tag
+        if: github.event_name == 'push'
         uses: actions/github-script@v9
         with:
           script: |
