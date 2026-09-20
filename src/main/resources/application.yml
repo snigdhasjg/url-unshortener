@@ -11,7 +11,7 @@ quarkus:
     insecure-requests: enabled
 
 resolver:
-  default-profile: android
+  default-profile: desktop
 
 # UA profiles are named config, not hardcoded strings — see UaProfilesConfig.
 # Chrome's *reduced* UA (UA Reduction): real Chrome on Android reports a frozen
@@ -22,5 +22,12 @@ ua-profiles:
     sec-ch-ua: '"Chromium";v="151", "Google Chrome";v="151", "Not?A_Brand";v="24"'
     sec-ch-ua-mobile: "?1"
     sec-ch-ua-platform: '"Android"'
+    accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    accept-language: "en-US,en;q=0.9"
+  desktop:
+    user-agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
+    sec-ch-ua: '"Chromium";v="151", "Google Chrome";v="151", "Not?A_Brand";v="24"'
+    sec-ch-ua-mobile: "?0"
+    sec-ch-ua-platform: '"Windows"'
     accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
     accept-language: "en-US,en;q=0.9"
