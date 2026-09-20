@@ -1,5 +1,7 @@
 package com.snigji.unshortener.resolver;
 
+import jakarta.ws.rs.BadRequestException;
+
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.Locale;
@@ -20,7 +22,7 @@ public final class UrlNormalizer {
      */
     public static URI normalizeInput(String raw) {
         if (raw == null || raw.isBlank()) {
-            throw new IllegalArgumentException("url must not be blank");
+            throw new BadRequestException("url must not be blank");
         }
         String candidate = raw.trim();
         if (!HAS_SCHEME.matcher(candidate).matches()) {
@@ -30,14 +32,14 @@ public final class UrlNormalizer {
         try {
             uri = new URI(candidate);
         } catch (URISyntaxException e) {
-            throw new IllegalArgumentException("malformed url: " + e.getMessage(), e);
+            throw new BadRequestException("malformed url: " + e.getMessage(), e);
         }
         String scheme = uri.getScheme();
         if (scheme == null || !(scheme.equalsIgnoreCase("http") || scheme.equalsIgnoreCase("https"))) {
-            throw new IllegalArgumentException("unsupported input scheme: " + scheme);
+            throw new BadRequestException("unsupported input scheme: " + scheme);
         }
         if (uri.getHost() == null) {
-            throw new IllegalArgumentException("url has no host");
+            throw new BadRequestException("url has no host");
         }
         return normalizeHttp(uri);
     }

@@ -5,7 +5,7 @@ import com.snigji.unshortener.resolver.ResolverLimits;
 import com.snigji.unshortener.service.ResolverService;
 import io.smallrye.mutiny.Uni;
 import jakarta.inject.Inject;
-import jakarta.ws.rs.BadRequestException;
+import jakarta.validation.constraints.NotNull;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
@@ -13,6 +13,7 @@ import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 
+import java.net.URI;
 import java.util.Optional;
 
 @Path("/api/v1/resolve")
@@ -23,10 +24,7 @@ public class ResolveResource {
 
     @GET
     @Produces(MediaType.APPLICATION_JSON)
-    public Uni<Response> resolve(@QueryParam("url") String url, @QueryParam("profile") String profile) {
-        if (url == null || url.isBlank()) {
-            throw new BadRequestException("missing url parameter");
-        }
+    public Uni<Response> resolve(@QueryParam("url") @NotNull URI url, @QueryParam("profile") String profile) {
         return resolverService.resolve(url, Optional.ofNullable(profile))
                 .ifNoItem()
                 .after(ResolverLimits.API_CEILING)

@@ -16,6 +16,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import java.net.URI;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -80,13 +81,18 @@ class RedirectResolverTest {
         return "http://localhost:" + port + path;
     }
 
+    /** RedirectResolver.resolve now takes an already-normalized URI, not a raw string. */
+    private URI uri(String path) {
+        return URI.create(url(path));
+    }
+
     private Result await(io.smallrye.mutiny.Uni<Result> uni) {
         return uni.await().atMost(java.time.Duration.ofSeconds(10));
     }
 
     @Test
     void followsAPlainRedirectChainToATerminal200() {
-        Result result = await(resolver.resolve(url("/start"), PROFILE));
+        Result result = await(resolver.resolve(uri("/start"), PROFILE));
         assertEquals(Status.RESOLVED, result.status());
         assertEquals(StopReason.TERMINAL_RESPONSE, result.stopReason());
         assertEquals(url("/final"), result.finalUrl());
@@ -97,14 +103,14 @@ class RedirectResolverTest {
 
     @Test
     void detectsALoop() {
-        Result result = await(resolver.resolve(url("/loop-a"), PROFILE));
+        Result result = await(resolver.resolve(uri("/loop-a"), PROFILE));
         assertEquals(Status.PARTIAL, result.status());
         assertEquals(StopReason.LOOP, result.stopReason());
     }
 
     @Test
     void stopsAtMaxHops() {
-        Result result = await(resolver.resolve(url("/chain/0"), PROFILE));
+        Result result = await(resolver.resolve(uri("/chain/0"), PROFILE));
         assertEquals(Status.PARTIAL, result.status());
         assertEquals(StopReason.MAX_HOPS, result.stopReason());
         assertEquals(ResolverLimits.MAX_HOPS, result.hops().size());
@@ -112,14 +118,14 @@ class RedirectResolverTest {
 
     @Test
     void fallsBackToGetWhenHeadIsRejected() {
-        Result result = await(resolver.resolve(url("/head-405"), PROFILE));
+        Result result = await(resolver.resolve(uri("/head-405"), PROFILE));
         assertEquals(Status.RESOLVED, result.status());
         assertEquals("GET", result.hops().get(0).method());
     }
 
     @Test
     void followsMetaRefresh() {
-        Result result = await(resolver.resolve(url("/meta-refresh"), PROFILE));
+        Result result = await(resolver.resolve(uri("/meta-refresh"), PROFILE));
         assertEquals(Status.RESOLVED, result.status());
         assertEquals(url("/final"), result.finalUrl());
         assertTrue(result.hops().stream().anyMatch(h -> h.via() == HopVia.META_REFRESH));
@@ -127,7 +133,7 @@ class RedirectResolverTest {
 
     @Test
     void flagsSuspectedJsRedirectAsPartial() {
-        Result result = await(resolver.resolve(url("/js-redirect"), PROFILE));
+        Result result = await(resolver.resolve(uri("/js-redirect"), PROFILE));
         assertEquals(Status.PARTIAL, result.status());
         assertEquals(StopReason.JS_SUSPECTED, result.stopReason());
         assertEquals(url("/js-redirect"), result.finalUrl());
@@ -135,7 +141,7 @@ class RedirectResolverTest {
 
     @Test
     void resolvesIntentSchemeAsTerminalSuccessNotError() {
-        Result result = await(resolver.resolve(url("/intent-redirect"), PROFILE));
+        Result result = await(resolver.resolve(uri("/intent-redirect"), PROFILE));
         assertEquals(Status.RESOLVED, result.status());
         assertEquals(StopReason.NON_HTTP_SCHEME, result.stopReason());
         Destination.AppIntent appIntent = assertInstanceOf(Destination.AppIntent.class, result.destination());
@@ -144,14 +150,14 @@ class RedirectResolverTest {
 
     @Test
     void carriesCookiesFromOneHopToTheNext() {
-        Result result = await(resolver.resolve(url("/cookie1"), PROFILE));
+        Result result = await(resolver.resolve(uri("/cookie1"), PROFILE));
         assertEquals(Status.RESOLVED, result.status());
         assertEquals(url("/cookie-final"), result.finalUrl());
     }
 
     @Test
     void classifiesConnectionFailureAsTransportError() {
-        Result result = await(resolver.resolve("http://127.0.0.1:1/unreachable", PROFILE));
+        Result result = await(resolver.resolve(URI.create("http://127.0.0.1:1/unreachable"), PROFILE));
         assertEquals(Status.FAILED, result.status());
         assertEquals(StopReason.TRANSPORT_ERROR, result.stopReason());
         assertInstanceOf(Destination.Unresolved.class, result.destination());

@@ -1,5 +1,6 @@
 package com.snigji.unshortener.resolver;
 
+import jakarta.ws.rs.BadRequestException;
 import org.junit.jupiter.api.Test;
 
 import java.net.URI;
@@ -37,13 +38,13 @@ class UrlNormalizerTest {
 
     @Test
     void rejectsNonHttpSchemeOnInput() {
-        assertThrows(IllegalArgumentException.class, () -> UrlNormalizer.normalizeInput("ftp://example.com/x"));
-        assertThrows(IllegalArgumentException.class, () -> UrlNormalizer.normalizeInput("intent://scan/#Intent;end"));
+        assertThrows(BadRequestException.class, () -> UrlNormalizer.normalizeInput("ftp://example.com/x"));
+        assertThrows(BadRequestException.class, () -> UrlNormalizer.normalizeInput("intent://scan/#Intent;end"));
     }
 
     @Test
     void rejectsBlankInput() {
-        assertThrows(IllegalArgumentException.class, () -> UrlNormalizer.normalizeInput(""));
-        assertThrows(IllegalArgumentException.class, () -> UrlNormalizer.normalizeInput("   "));
+        assertThrows(BadRequestException.class, () -> UrlNormalizer.normalizeInput(""));
+        assertThrows(BadRequestException.class, () -> UrlNormalizer.normalizeInput("   "));
     }
 }

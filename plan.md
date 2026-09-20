@@ -193,7 +193,7 @@ under `/api/v1/resolve`. Don't "fix" this to look consistent — the mismatch is
 
 ```jsonc
 {
-  "original_url": "...",
+  "original_url": "...",           // the caller's input, normalized (see Endpoint 2)
   "final_url": "...",              // always populated, even on partial
   "destination": { },              // the sealed type
   "status": "resolved|partial|failed",
@@ -245,8 +245,12 @@ Drop-in replacement. Exactly three fields, nothing else on the success path.
 }
 ```
 
-- `shortened_url` echoes the **raw input** as the caller sent it, not the normalized
-  form — clients string-compare it against what they passed.
+- `shortened_url` echoes the caller's input **after normalization** (scheme defaulted
+  to `https` when absent, scheme/host lowercased, default ports stripped, fragment
+  dropped — see `UrlNormalizer`) whenever the input parsed successfully — not
+  necessarily byte-identical to what they sent. On a validation failure (input that
+  never normalized, e.g. an unsupported scheme), there is no normalized form to show,
+  so it falls back to echoing the raw string instead.
 - Profile is **hardcoded to `android`**. No `profile` query param. Ignore it if present.
 - Accept and **silently ignore** an `Authorization: Token ...` header. Clients already
   configured against unshorten.me send one; rejecting it breaks drop-in for no gain.

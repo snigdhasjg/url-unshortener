@@ -115,6 +115,36 @@ class ApiEndpointsTest {
     }
 
     @Test
+    void resolveEchoesNormalizedOriginalUrl() {
+        RestAssured.given()
+                .queryParam("url", "HTTP://localhost:" + targetPort + "/start")
+                .when().get("/api/v1/resolve")
+                .then().statusCode(200)
+                .body("original_url", equalTo(targetUrl("/start")));
+    }
+
+    @Test
+    void unshortenEchoesNormalizedShortenedUrl() {
+        RestAssured.given()
+                .queryParam("url", "HTTP://localhost:" + targetPort + "/start")
+                .when().get("/api/v2/unshorten")
+                .then().statusCode(200)
+                .body("shortened_url", equalTo(targetUrl("/start")));
+    }
+
+    @Test
+    void unshortenTreatsEmptyUrlAsMissing() {
+        // RESTEasy's query-param extraction treats a present-but-empty "url" the same
+        // as an absent one (verified empirically) — it never reaches
+        // UrlParamConverterProvider, so this fails @NotNull like a truly missing param
+        // and comes back 400, not 200/success:false like other malformed input does.
+        RestAssured.given()
+                .queryParam("url", "")
+                .when().get("/api/v2/unshorten")
+                .then().statusCode(400);
+    }
+
+    @Test
     void unshortenReturns200WithSuccessFalseOnMalformedInput() {
         // v2 is unshorten.me-compatible: only a *missing* url param is 400 — a malformed
         // one still comes back 200 with success:false, since compat clients won't handle 422.

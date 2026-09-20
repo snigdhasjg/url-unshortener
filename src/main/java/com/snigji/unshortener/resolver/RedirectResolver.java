@@ -16,7 +16,6 @@ import io.vertx.mutiny.ext.web.client.HttpResponse;
 import io.vertx.mutiny.ext.web.client.WebClient;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import jakarta.ws.rs.BadRequestException;
 import org.jboss.logging.Logger;
 
 import java.net.URI;
@@ -52,18 +51,11 @@ public class RedirectResolver {
     @Inject
     EdgeCache edgeCache;
 
-    public Uni<Result> resolve(String rawInput, UaProfile profile) {
-        URI normalized;
-        try {
-            normalized = UrlNormalizer.normalizeInput(rawInput);
-        } catch (IllegalArgumentException e) {
-            throw new BadRequestException(e.getMessage());
-        }
-        WalkState state = new WalkState(rawInput, profile);
+    public Uni<Result> resolve(URI url, UaProfile profile) {
+        WalkState state = new WalkState(url.toString(), profile);
         long startNanos = System.nanoTime();
-        URI entry = normalized;
-        return step(normalized, state, HopVia.INITIAL)
-                .map(outcome -> buildResult(entry, state, outcome, startNanos));
+        return step(url, state, HopVia.INITIAL)
+                .map(outcome -> buildResult(url, state, outcome, startNanos));
     }
 
     private Uni<WalkOutcome> step(URI current, WalkState state, HopVia via) {

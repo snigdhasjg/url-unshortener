@@ -7,13 +7,11 @@ import com.snigji.unshortener.domain.Status;
 import com.snigji.unshortener.domain.StopReason;
 import com.snigji.unshortener.resolver.RedirectResolver;
 import com.snigji.unshortener.resolver.ResolverLimits;
-import com.snigji.unshortener.resolver.UrlNormalizer;
 import com.snigji.unshortener.ua.UaProfile;
 import com.snigji.unshortener.ua.UaProfileRegistry;
 import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import jakarta.ws.rs.BadRequestException;
 import org.jboss.logging.Logger;
 
 import java.net.URI;
@@ -39,26 +37,17 @@ public class ResolverService {
     @Inject
     UaProfileRegistry uaProfiles;
 
-    public Uni<Result> resolve(String rawUrl, Optional<String> profileName) {
+    public Uni<Result> resolve(URI url, Optional<String> profileName) {
         UaProfile profile = uaProfiles.resolve(profileName);
-        URI normalized = normalizeOrThrow(rawUrl);
-        String cacheKey = profile.name() + "|" + normalized;
+        String cacheKey = profile.name() + "|" + url;
 
         Optional<Result> cached = wholeWalkCache.get(cacheKey);
         if (cached.isPresent()) {
             return Uni.createFrom().item(cached.get().withCached(true));
         }
 
-        return redirectResolver.resolve(rawUrl, profile)
+        return redirectResolver.resolve(url, profile)
                 .invoke(result -> wholeWalkCache.put(cacheKey, result));
-    }
-
-    private URI normalizeOrThrow(String rawUrl) {
-        try {
-            return UrlNormalizer.normalizeInput(rawUrl);
-        } catch (IllegalArgumentException e) {
-            throw new BadRequestException(e.getMessage());
-        }
     }
 
     /**
@@ -67,9 +56,10 @@ public class ResolverService {
      * so this should never actually fire in normal operation. If it does, degrade
      * safely rather than breach the ceiling — logged at WARN since it signals a bug.
      */
-    public Result hardCutoffFallback(String rawUrl) {
-        LOG.warnf("hard cutoff reached for %s — resolver budget arithmetic likely has a bug", rawUrl);
-        return new Result(rawUrl, rawUrl, new Destination.Unresolved(StopReason.DEADLINE), Status.PARTIAL,
+    public Result hardCutoffFallback(URI url) {
+        LOG.warnf("hard cutoff reached for %s — resolver budget arithmetic likely has a bug", url);
+        String rendered = url.toString();
+        return new Result(rendered, rendered, new Destination.Unresolved(StopReason.DEADLINE), Status.PARTIAL,
                 StopReason.DEADLINE, List.of(), ResolverLimits.API_CEILING.toMillis(), 0, false, false);
     }
 }
