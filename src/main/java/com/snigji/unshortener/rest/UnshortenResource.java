@@ -12,6 +12,8 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.core.UriInfo;
+import org.jboss.resteasy.reactive.server.ServerExceptionMapper;
 
 /**
  * unshorten.me-compatible endpoint. Path is byte-identical to theirs on purpose —
@@ -40,14 +42,18 @@ public class UnshortenResource {
             return Uni.createFrom().item(Response.status(Response.Status.BAD_REQUEST)
                     .entity(java.util.Map.of("error", "missing url parameter")).build());
         }
-        try {
-            return resolverService.resolve(url, java.util.Optional.of("android"))
-                    .ifNoItem().after(ResolverLimits.API_CEILING)
-                    .recoverWithItem(() -> resolverService.hardCutoffFallback(url))
-                    .map(result -> Response.ok(mapper.toCompat(result, url)).build());
-        } catch (BadRequestException e) {
-            // Always 200 here, even on malformed input beyond a missing url param.
-            return Uni.createFrom().item(Response.ok(UnshortenResponse.failure(url, e.getMessage())).build());
-        }
+        return resolverService.resolve(url, java.util.Optional.of("android"))
+                .ifNoItem().after(ResolverLimits.API_CEILING)
+                .recoverWithItem(() -> resolverService.hardCutoffFallback(url))
+                .map(result -> Response.ok(mapper.toCompat(result, url)).build());
+    }
+
+    // Always 200 here, even on malformed input beyond a missing url param. url is
+    // non-null: the missing-param guard above returns before a BadRequestException
+    // can be thrown, so this only ever fires for malformed-but-present input.
+    @ServerExceptionMapper
+    public Response mapBadRequest(BadRequestException e, UriInfo uriInfo) {
+        String url = uriInfo.getQueryParameters().getFirst("url");
+        return Response.ok(UnshortenResponse.failure(url, e.getMessage())).build();
     }
 }

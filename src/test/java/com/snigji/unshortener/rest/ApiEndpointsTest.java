@@ -80,7 +80,8 @@ class ApiEndpointsTest {
         RestAssured.given()
                 .queryParam("url", "ftp://example.com/x")
                 .when().get("/api/v1/resolve")
-                .then().statusCode(400);
+                .then().statusCode(400)
+                .body("error", equalTo("unsupported input scheme: ftp"));
     }
 
     @Test
@@ -135,5 +136,30 @@ class ApiEndpointsTest {
                 .when().get("/api/v2/unshorten")
                 .then().statusCode(200)
                 .body("success", equalTo(true));
+    }
+
+    @Test
+    void unmatchedPathStillReturns404() {
+        RestAssured.given()
+                .when().get("/api/v1/nonexistent")
+                .then().statusCode(404);
+    }
+
+    @Test
+    void resolveRejectsUnknownProfileWith400() {
+        RestAssured.given()
+                .queryParam("url", targetUrl("/start"))
+                .queryParam("profile", "bogus")
+                .when().get("/api/v1/resolve")
+                .then().statusCode(400)
+                .body("error", equalTo("unknown profile: bogus"));
+    }
+
+    @Test
+    void unexpectedExceptionReturnsErrorShape() {
+        RestAssured.given()
+                .when().get("/test-only/boom")
+                .then().statusCode(500)
+                .body("error", equalTo("internal"));
     }
 }

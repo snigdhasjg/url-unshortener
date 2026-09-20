@@ -201,11 +201,11 @@ public class RedirectResolver {
             return new HopOutcome.Terminal(new Destination.Web(from), StopReason.TERMINAL_RESPONSE);
         }
         String scheme = resolved.getScheme();
-        if (scheme != null && IntentUrlParser.isIntent(scheme)) {
+        if (IntentUrlParser.isIntent(scheme)) {
             URI fallback = IntentUrlParser.extractFallback(resolved.toString()).orElse(null);
             return new HopOutcome.Terminal(new Destination.AppIntent(resolved, fallback), StopReason.NON_HTTP_SCHEME);
         }
-        if (scheme != null && IntentUrlParser.isMarket(scheme)) {
+        if (IntentUrlParser.isMarket(scheme)) {
             String packageId = IntentUrlParser.extractPackageId(resolved.toString())
                     .orElse(resolved.getSchemeSpecificPart());
             return new HopOutcome.Terminal(new Destination.Store(packageId), StopReason.NON_HTTP_SCHEME);
@@ -266,8 +266,8 @@ public class RedirectResolver {
         Status status = Status.from(outcome.reason(), anyHopCompleted);
         String finalUrl = finalUrl(outcome.destination(), state, normalizedInput);
         boolean resumable = status == Status.PARTIAL
-                && outcome.destination() instanceof Destination.Web web
-                && edgeCache.isWarm(web.uri(), state.profile().name());
+                && outcome.destination() instanceof Destination.Web(URI uri)
+                && edgeCache.isWarm(uri, state.profile().name());
         return new Result(state.rawInput(), finalUrl, outcome.destination(), status, outcome.reason(),
                 state.hops(), elapsedMs(startNanos), state.remainingMs(), false, resumable);
     }
@@ -283,7 +283,7 @@ public class RedirectResolver {
 
     private String lastKnownUrl(WalkState state, URI normalizedInput) {
         List<Hop> hops = state.hops();
-        return hops.isEmpty() ? normalizedInput.toString() : hops.get(hops.size() - 1).url();
+        return hops.isEmpty() ? normalizedInput.toString() : hops.getLast().url();
     }
 
     private static boolean isHtml(String contentType) {

@@ -13,7 +13,6 @@ import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 
-import java.util.Map;
 import java.util.Optional;
 
 @Path("/api/v1/resolve")
@@ -26,19 +25,13 @@ public class ResolveResource {
     @Produces(MediaType.APPLICATION_JSON)
     public Uni<Response> resolve(@QueryParam("url") String url, @QueryParam("profile") String profile) {
         if (url == null || url.isBlank()) {
-            return Uni.createFrom().item(badRequest("missing url parameter"));
+            throw new BadRequestException("missing url parameter");
         }
-        try {
-            // Resource-level hard cutoff: defense in depth alongside the resolver's own
-            // deadline and the per-request Vert.x timeout. A timeout that produced hops is
-            // a successful partial, never a gateway failure — recoverWithItem, not failWith.
-            return resolverService.resolve(url, Optional.ofNullable(profile))
-                    .ifNoItem().after(ResolverLimits.API_CEILING)
-                    .recoverWithItem(() -> resolverService.hardCutoffFallback(url))
-                    .map(this::toResponse);
-        } catch (BadRequestException e) {
-            return Uni.createFrom().item(badRequest(e.getMessage()));
-        }
+        return resolverService.resolve(url, Optional.ofNullable(profile))
+                .ifNoItem()
+                .after(ResolverLimits.API_CEILING)
+                .recoverWithItem(() -> resolverService.hardCutoffFallback(url))
+                .map(this::toResponse);
     }
 
     private Response toResponse(Result result) {
@@ -46,9 +39,5 @@ public class ResolveResource {
         return Response.ok(result)
                 .header("Cache-Control", "max-age=" + cacheSeconds)
                 .build();
-    }
-
-    private Response badRequest(String message) {
-        return Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error", message)).build();
     }
 }
