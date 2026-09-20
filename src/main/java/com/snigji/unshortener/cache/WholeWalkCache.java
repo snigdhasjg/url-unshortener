@@ -5,6 +5,7 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 import com.snigji.unshortener.domain.Result;
 import com.snigji.unshortener.domain.Status;
 import jakarta.enterprise.context.ApplicationScoped;
+import org.jboss.logging.Logger;
 
 import java.time.Duration;
 import java.util.Optional;
@@ -21,6 +22,8 @@ import java.util.Optional;
  */
 @ApplicationScoped
 public class WholeWalkCache {
+
+    private static final Logger LOG = Logger.getLogger(WholeWalkCache.class);
 
     private final Cache<String, Result> success = Caffeine.newBuilder()
             .expireAfterWrite(Duration.ofDays(7))
@@ -42,6 +45,7 @@ public class WholeWalkCache {
 
     /** Never throws on a resolution failure — {@code Result} always carries success/failure explicitly. */
     public void put(String key, Result result) {
+        LOG.debugf("whole-walk cache put %s into %s", key, result.status() == Status.FAILED ? "failure" : "success");
         (result.status() == Status.FAILED ? failure : success).put(key, result);
     }
 }

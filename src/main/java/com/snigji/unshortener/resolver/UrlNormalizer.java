@@ -1,6 +1,7 @@
 package com.snigji.unshortener.resolver;
 
 import jakarta.ws.rs.BadRequestException;
+import org.jboss.logging.Logger;
 
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -9,6 +10,7 @@ import java.util.regex.Pattern;
 
 public final class UrlNormalizer {
 
+    private static final Logger LOG = Logger.getLogger(UrlNormalizer.class);
     private static final Pattern HAS_SCHEME = Pattern.compile("^[a-zA-Z][a-zA-Z0-9+.-]*://.*");
 
     private UrlNormalizer() {
@@ -41,7 +43,9 @@ public final class UrlNormalizer {
         if (uri.getHost() == null) {
             throw new BadRequestException("url has no host");
         }
-        return normalizeHttp(uri);
+        URI normalized = normalizeHttp(uri);
+        LOG.debugf("normalized input %s -> %s", raw, normalized);
+        return normalized;
     }
 
     /**

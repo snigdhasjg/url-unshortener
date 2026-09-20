@@ -7,17 +7,16 @@ services:
     image: unshortener:latest
     restart: unless-stopped
     ports:
-      - "80:80"
-      - "443:443"
-    # HTTPS on 443 is opt-in: mount a PEM cert+key and point Quarkus at them.
-    # With neither set, the container serves plain HTTP on 80 only.
-    # volumes:
-    #   - ./certs:/etc/unshortener/tls:ro
-    # environment:
-    #   QUARKUS_HTTP_SSL_CERTIFICATE_FILES: /etc/unshortener/tls/tls.crt
-    #   QUARKUS_HTTP_SSL_CERTIFICATE_KEY_FILES: /etc/unshortener/tls/tls.key
+      - "9080:80"
+#      - "9443:443"
+    environment:
+      QUARKUS_LOG_CATEGORY__COM_SNIGJI_UNSHORTENER__LEVEL: DEBUG
+#      QUARKUS_HTTP_SSL_CERTIFICATE_FILES: /etc/unshortener/tls/tls.crt
+#      QUARKUS_HTTP_SSL_CERTIFICATE_KEY_FILES: /etc/unshortener/tls/tls.key
+#    volumes:
+#      - ./certs:/etc/unshortener/tls:ro
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:80/q/health"]
+      test: [ "CMD", "curl", "-f", "http://localhost:80/q/health" ]
       interval: 30s
       timeout: 5s
       retries: 3

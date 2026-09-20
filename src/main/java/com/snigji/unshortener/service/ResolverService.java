@@ -43,9 +43,11 @@ public class ResolverService {
 
         Optional<Result> cached = wholeWalkCache.get(cacheKey);
         if (cached.isPresent()) {
+            LOG.debugf("whole-walk cache hit for %s", cacheKey);
             return Uni.createFrom().item(cached.get().withCached(true));
         }
 
+        LOG.debugf("whole-walk cache miss for %s, resolving", cacheKey);
         return redirectResolver.resolve(url, profile)
                 .invoke(result -> wholeWalkCache.put(cacheKey, result));
     }

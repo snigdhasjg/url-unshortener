@@ -10,6 +10,7 @@ import com.snigji.unshortener.domain.StopReason;
 import com.snigji.unshortener.security.Guard;
 import com.snigji.unshortener.ua.UaProfile;
 import io.smallrye.mutiny.Uni;
+import io.vertx.core.http.HttpClosedException;
 import io.vertx.mutiny.core.buffer.Buffer;
 import io.vertx.mutiny.ext.web.client.HttpRequest;
 import io.vertx.mutiny.ext.web.client.HttpResponse;
@@ -54,30 +55,43 @@ public class RedirectResolver {
     public Uni<Result> resolve(URI url, UaProfile profile) {
         WalkState state = new WalkState(url.toString(), profile);
         long startNanos = System.nanoTime();
+        LOG.debugf("resolve start: url=%s profile=%s", url, profile.name());
         return step(url, state, HopVia.INITIAL)
                 .map(outcome -> buildResult(url, state, outcome, startNanos));
     }
 
     private Uni<WalkOutcome> step(URI current, WalkState state, HopVia via) {
         if (!state.markVisited(current)) {
+            LOG.debugf("stop LOOP at %s (hop %d, via=%s)", current, state.hopCount(), via);
             return Uni.createFrom().item(new WalkOutcome(new Destination.Web(current), StopReason.LOOP));
         }
         if (state.atMaxHops()) {
+            LOG.debugf("stop MAX_HOPS at %s (%d hops reached)", current, state.hopCount());
             return Uni.createFrom().item(new WalkOutcome(new Destination.Web(current), StopReason.MAX_HOPS));
         }
         if (state.belowFloor()) {
+            LOG.debugf("stop DEADLINE at %s (%dms remaining, below floor)", current, state.remainingMs());
             return Uni.createFrom().item(new WalkOutcome(new Destination.Web(current), StopReason.DEADLINE));
         }
 
         long hopTimeoutMs = state.hopTimeoutMs();
+        LOG.debugf("hop %d: %s via=%s timeoutMs=%d remainingMs=%d",
+                state.hopCount() + 1, current, via, hopTimeoutMs, state.remainingMs());
         return computeHop(current, state, via, hopTimeoutMs)
                 .flatMap(computation -> {
                     state.addHop(computation.hop());
                     edgeCache.put(current, state.profile().name(), computation);
                     return switch (computation.outcome()) {
-                        case HopOutcome.Redirect r -> step(r.next(), state, r.via());
-                        case HopOutcome.Terminal t ->
-                                Uni.createFrom().item(new WalkOutcome(t.destination(), t.reason()));
+                        case HopOutcome.Redirect r -> {
+                            LOG.debugf("hop %d redirect: %s -> %s (status=%d, via=%s)",
+                                    state.hopCount(), current, r.next(), computation.hop().statusCode(), r.via());
+                            yield step(r.next(), state, r.via());
+                        }
+                        case HopOutcome.Terminal t -> {
+                            LOG.debugf("hop %d terminal: %s reason=%s destination=%s",
+                                    state.hopCount(), current, t.reason(), t.destination());
+                            yield Uni.createFrom().item(new WalkOutcome(t.destination(), t.reason()));
+                        }
                     };
                 });
     }
@@ -87,8 +101,14 @@ public class RedirectResolver {
                 // `via` describes how *this* walk reached the target, not a property of the
                 // target itself — a cache hit from a walk that arrived here differently (say,
                 // by a plain redirect instead of a meta-refresh) must not carry the old via.
-                .map(cached -> Uni.createFrom().item(withVia(cached, via)))
-                .orElseGet(() -> fetchHop(target, state, via, timeoutMs));
+                .map(cached -> {
+                    LOG.debugf("edge cache hit for %s (profile=%s)", target, state.profile().name());
+                    return Uni.createFrom().item(withVia(cached, via));
+                })
+                .orElseGet(() -> {
+                    LOG.debugf("edge cache miss for %s (profile=%s), fetching", target, state.profile().name());
+                    return fetchHop(target, state, via, timeoutMs);
+                });
     }
 
     private HopComputation withVia(HopComputation computation, HopVia via) {
@@ -104,6 +124,7 @@ public class RedirectResolver {
     private Uni<HopComputation> fetchHop(URI target, WalkState state, HopVia via, long timeoutMs) {
         guard.checkUrl(target);
         long hopStartNanos = System.nanoTime();
+        LOG.debugf("HEAD %s (timeoutMs=%d)", target, timeoutMs);
         return sendRequest(target, "HEAD", state, timeoutMs)
                 .flatMap(headResponse -> {
                     boolean fallbackStatus = GET_FALLBACK_STATUSES.contains(headResponse.statusCode());
@@ -111,12 +132,18 @@ public class RedirectResolver {
                     // response needs an actual GET before we can scan it for meta-refresh/JS intent.
                     boolean needsBodyForHtmlScan = headResponse.statusCode() == 200 && isHtml(headResponse.getHeader("Content-Type"));
                     if (fallbackStatus || needsBodyForHtmlScan) {
+                        LOG.debugf("HEAD %s -> %d, falling back to GET (fallbackStatus=%s, htmlScan=%s)",
+                                target, headResponse.statusCode(), fallbackStatus, needsBodyForHtmlScan);
+                        // The GET reuses the just-freed HEAD connection from the pool; if the
+                        // server closed it right as it went back in, the retry gets a fresh one.
                         return sendRequest(target, "GET", state, timeoutMs)
+                                .onFailure(RedirectResolver::isStaleConnection).retry().atMost(1)
                                 .map(getResponse -> new SimpleEntry<>("GET", getResponse));
                     }
                     return Uni.createFrom().item(new SimpleEntry<>("HEAD", headResponse));
                 })
                 .map(entry -> interpret(target, entry.getKey(), entry.getValue(), via, state, hopStartNanos))
+                .onFailure().invoke(t -> LOG.debugf(t, "hop failed for %s", target))
                 .onFailure().recoverWithItem(t -> errorComputation(target, via, hopStartNanos, t));
     }
 
@@ -142,8 +169,10 @@ public class RedirectResolver {
         long elapsedMs = elapsedMs(hopStartNanos);
         int status = response.statusCode();
         String contentType = response.getHeader("Content-Type");
+        LOG.debugf("%s %s -> %d (%s, %dms)", method, target, status, contentType, elapsedMs);
         List<String> setCookies = response.headers().getAll("Set-Cookie");
         if (!setCookies.isEmpty() && target.getHost() != null) {
+            LOG.debugf("storing %d cookie(s) for %s", setCookies.size(), target.getHost());
             state.cookieJar().store(target.getHost(), setCookies);
         }
         // Cookie-bearing hops are not edge-cacheable: replaying from cache would silently
@@ -236,6 +265,7 @@ public class RedirectResolver {
     private HopComputation errorComputation(URI target, HopVia via, long hopStartNanos, Throwable t) {
         long elapsedMs = elapsedMs(hopStartNanos);
         StopReason reason = classifyError(t);
+        LOG.debugf("classified error for %s as %s: %s", target, reason, t.toString());
         // Method is unknown here (the failure could have happened on the HEAD attempt or its GET
         // fallback) — HEAD is the common case, since transport/DNS failures happen on first contact.
         Hop hop = new Hop(target.toString(), "HEAD", null, null, via, null, null, elapsedMs);
@@ -251,6 +281,15 @@ public class RedirectResolver {
         return StopReason.TRANSPORT_ERROR;
     }
 
+    private static boolean isStaleConnection(Throwable t) {
+        for (Throwable cause = t; cause != null; cause = cause.getCause()) {
+            if (cause instanceof HttpClosedException) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private Result buildResult(URI normalizedInput, WalkState state, WalkOutcome outcome, long startNanos) {
         // The final hop recorded is always the terminal one (success or error) — "any hop
         // completed" means there's at least one *earlier* hop besides that terminal attempt.
@@ -260,8 +299,11 @@ public class RedirectResolver {
         boolean resumable = status == Status.PARTIAL
                 && outcome.destination() instanceof Destination.Web(URI uri)
                 && edgeCache.isWarm(uri, state.profile().name());
+        long totalElapsedMs = elapsedMs(startNanos);
+        LOG.debugf("resolve done: input=%s finalUrl=%s status=%s reason=%s hops=%d elapsedMs=%d resumable=%s",
+                normalizedInput, finalUrl, status, outcome.reason(), state.hopCount(), totalElapsedMs, resumable);
         return new Result(state.rawInput(), finalUrl, outcome.destination(), status, outcome.reason(),
-                state.hops(), elapsedMs(startNanos), state.remainingMs(), false, resumable);
+                state.hops(), totalElapsedMs, state.remainingMs(), false, resumable);
     }
 
     private String finalUrl(Destination destination, WalkState state, URI normalizedInput) {

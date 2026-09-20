@@ -13,6 +13,13 @@ quarkus:
 resolver:
   default-profile: desktop
 
+"%dev":
+  quarkus:
+    log:
+      category:
+        "com.snigji.unshortener":
+          level: DEBUG
+
 # UA profiles are named config, not hardcoded strings — see UaProfilesConfig.
 # Chrome's *reduced* UA (UA Reduction): real Chrome on Android reports a frozen
 # "Android 10; K" regardless of actual hardware. Don't "fix" this to look accurate.

@@ -6,6 +6,7 @@ import com.snigji.unshortener.domain.StopReason;
 import com.snigji.unshortener.resolver.HopComputation;
 import com.snigji.unshortener.resolver.HopOutcome;
 import jakarta.enterprise.context.ApplicationScoped;
+import org.jboss.logging.Logger;
 
 import java.net.URI;
 import java.time.Duration;
@@ -22,6 +23,8 @@ import java.util.Optional;
  */
 @ApplicationScoped
 public class EdgeCache {
+
+    private static final Logger LOG = Logger.getLogger(EdgeCache.class);
 
     private final Cache<String, HopComputation> success = Caffeine.newBuilder()
             .expireAfterWrite(Duration.ofDays(7))
@@ -48,10 +51,12 @@ public class EdgeCache {
 
     public void put(URI url, String profile, HopComputation computation) {
         if (!computation.cacheable()) {
+            LOG.debugf("not caching %s (profile=%s): cookie-bearing hop", url, profile);
             return;
         }
         boolean isTransientError = computation.outcome() instanceof HopOutcome.Terminal terminal
                 && (terminal.reason() == StopReason.TRANSPORT_ERROR || terminal.reason() == StopReason.DNS_ERROR);
+        LOG.debugf("edge cache put %s (profile=%s) into %s", url, profile, isTransientError ? "failure" : "success");
         (isTransientError ? failure : success).put(key(url, profile), computation);
     }
 
