@@ -79,25 +79,18 @@ jobs:
           retention-days: 7
 
   build:
-    name: Build (${{ matrix.platform }})
-    runs-on: ${{ matrix.runner }}
+    name: Build and publish
+    runs-on: ubuntu-26.04
     needs:
       - version
       - test
     if: github.event_name == 'push'
-    timeout-minutes: 45
+    timeout-minutes: 30
     permissions:
-      contents: read
+      contents: write
       packages: write
-      artifact-metadata: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: linux/amd64
-            runner: ubuntu-26.04
-          - platform: linux/arm64
-            runner: ubuntu-26.04-arm
+      id-token: write
+      attestations: write
     steps:
       - name: Clone the code
         uses: actions/checkout@v7
@@ -113,16 +106,8 @@ jobs:
           java-version: "25"
           cache: gradle
 
-      - name: Build native executable
-        run: |
-          ./gradlew build -x test --no-daemon \
-            -Dquarkus.native.enabled=true \
-            -Dquarkus.package.jar.enabled=false \
-            -Dquarkus.native.container-build=true \
-            -Dquarkus.native.container-runtime=docker \
-            -Dquarkus.native.builder-image=quay.io/quarkus/ubi9-quarkus-mandrel-builder-image:25.0.4.1-Final-java25 \
-            -Dquarkus.native.native-image-xmx=6g \
-            -Dquarkus.native.march=compatibility
+      - name: Build the jar
+        run: ./gradlew build -x test --no-daemon
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -134,15 +119,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push image by digest
+      # The jar is arch-independent and Dockerfile.jvm has no RUN steps, so a
+      # single buildx call produces a proper multi-arch manifest list directly —
+      # no per-arch runner matrix or digest-merge step needed.
+      - name: Build and push image
         id: build
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: src/main/docker/Dockerfile.native-micro
-          platforms: ${{ matrix.platform }}
+          file: src/main/docker/Dockerfile.jvm
+          platforms: linux/amd64,linux/arm64
           provenance: true
           sbom: true
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ needs.version.outputs.version }}
+            ghcr.io/${{ github.repository }}:latest
           labels: |
             org.opencontainers.image.description=${{ env.IMAGE_DESCRIPTION }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
@@ -151,76 +142,13 @@ jobs:
             org.opencontainers.image.version=${{ needs.version.outputs.version }}
             org.opencontainers.image.revision=${{ needs.version.outputs.commit }}
             org.opencontainers.image.url=https://github.com/${{ github.repository }}
-          outputs: type=image,name=ghcr.io/${{ github.repository }},push-by-digest=true,name-canonical=true,push=true
-
-      - name: Export digest
-        run: |
-          mkdir -p /tmp/digests
-          digest="${{ steps.build.outputs.digest }}"
-          touch "/tmp/digests/${digest#sha256:}"
-
-      - name: Upload digest
-        uses: actions/upload-artifact@v7
-        with:
-          name: digests-${{ matrix.platform == 'linux/amd64' && 'linux-amd64' || 'linux-arm64' }}
-          path: /tmp/digests/*
-          retention-days: 1
-
-  merge:
-    name: Merge and publish
-    runs-on: ubuntu-26.04
-    needs:
-      - version
-      - build
-    permissions:
-      contents: write
-      packages: write
-      id-token: write
-      attestations: write
-      artifact-metadata: write
-    steps:
-      - name: Download digests
-        uses: actions/download-artifact@v8
-        with:
-          path: /tmp/digests
-          pattern: digests-*
-          merge-multiple: true
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Docker login to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create and push manifest list
-        id: merge
-        working-directory: /tmp/digests
-        run: |
-          image="ghcr.io/${{ github.repository }}"
-          docker buildx imagetools create \
-            --tag "${image}:${{ needs.version.outputs.version }}" \
-            --tag "${image}:latest" \
-            --annotation "index:org.opencontainers.image.description=${{ env.IMAGE_DESCRIPTION }}" \
-            --annotation "index:org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
-            --annotation "index:org.opencontainers.image.licenses=MPL-2.0" \
-            --annotation "index:org.opencontainers.image.title=unshortener" \
-            --annotation "index:org.opencontainers.image.version=${{ needs.version.outputs.version }}" \
-            --annotation "index:org.opencontainers.image.revision=${{ needs.version.outputs.commit }}" \
-            --annotation "index:org.opencontainers.image.url=https://github.com/${{ github.repository }}" \
-            $(printf 'ghcr.io/${{ github.repository }}@sha256:%s ' *)
-
-          digest=$(docker buildx imagetools inspect "${image}:${{ needs.version.outputs.version }}" --format '{{json .Manifest}}' | jq -r '.digest')
-          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+          push: true
 
       - name: Attest image
         uses: actions/attest@v4
         with:
           subject-name: ghcr.io/${{ github.repository }}
-          subject-digest: ${{ steps.merge.outputs.digest }}
+          subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
 
       - name: Create tag

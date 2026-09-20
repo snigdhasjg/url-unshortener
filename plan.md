@@ -20,15 +20,11 @@ extensions           rest-jackson, vertx, cache, smallrye-health
 
 ## Runtime & deployment
 
-- Java 25 (Temurin), Quarkus latest (3.39.x), native image via Mandrel 25
+- Java 25 (Temurin), Quarkus latest (3.39.x), JVM mode only — native-image support was
+  dropped; this is a long-running server, not a CLI/FaaS workload, so JVM mode's faster
+  builds and full reflection support win over native's startup-time/RSS advantage
 - Dev: `quarkus dev` (or `./gradlew quarkusDev`) with live reload on the JVM
-- Native: `quarkus build --native -Dquarkus.native.container-build=true`
-  (CI or a machine with 8GB free). Prefer the CLI over raw Gradle — the underlying
-  properties changed in Quarkus 3.9 (`quarkus.package.type=native` is gone, replaced by
-  `quarkus.native.enabled` + `quarkus.package.jar.enabled=false`) and the CLI sets them
-  correctly.
-- Keep the JVM-mode image buildable as a fallback if native-image fights a dependency
-- Target: ~60-80MB image, ~50MB RSS
+- Target: JVM-mode image, ubi9-openjdk-25-runtime base
 - Homelab Docker, IPvlan L3 (container has its own LAN IP)
 - DNS goes through AdGuard, which has this container allowlisted (unfiltered but logged)
 
@@ -162,10 +158,10 @@ has reflection-free Jackson serializers on by default, generated from a resource
 method's declared return type — but that only helps if the method returns the DTO
 type directly. `ResolveResource`/`UnshortenResource` return `Uni<Response>` (needed
 for per-response `Cache-Control` headers), which erases the body type and defeats
-that inference. In native builds this means every type reachable from a JSON
-response body needs manual `@RegisterForReflection` — see `NativeReflectionConfig`
-in `domain/`. Found by actually running a container-build native binary, not by
-inspection; do the same before trusting any change near the wire model in native.
+that inference. In JVM mode this only costs the reflection-free fast path, not
+correctness — plain reflection still finds everything, unlike native-image, which
+is why native-image support was dropped rather than papered over with
+`@RegisterForReflection`.
 
 ---
 
@@ -418,21 +414,9 @@ Not now, but don't design it out.
 
 ---
 
-## Native-image checklist
+## JVM-mode deployment checklist
 
-Verify these in the built binary, not just dev mode:
-
-- [x] HTTPS works outbound — `quarkus.native.enable-https-url-handler=true` is set in
-  `application.yml`. Without it, native-image doesn't register the `https` URL protocol
-  handler and every outbound HTTPS fetch throws `MalformedURLException` at runtime
-  (`Accessing a URL protocol that was not enabled`) — hit and confirmed fixed via a
-  container-build native run. Still smoke-test the truststore on the target hardware.
 - [ ] `-Dvertx.disableDnsResolver=true` is actually taking effect (confirm via AdGuard logs)
-- [ ] `networkaddress.cache.ttl` set explicitly — defaults differ under native-image
-- [x] JSON serialization of records and the sealed hierarchy round-trips — required
-  `NativeReflectionConfig` (see above); confirmed against real requests on both
-  endpoints, including the sealed `Destination` hierarchy and enum wire values.
-- [ ] Build JDK and Mandrel JDK versions match (both 25)
 
 ---
 
@@ -447,7 +431,6 @@ Verify these in the built binary, not just dev mode:
 4. Meta refresh.
 5. JS detection (static scan, no execution).
 6. `intent://` parsing and deep-link destinations.
-7. Native build + the checklist above.
 
 ## Explicitly out of scope
 

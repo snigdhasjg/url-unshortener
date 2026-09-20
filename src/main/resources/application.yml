@@ -9,12 +9,6 @@ quarkus:
     # This is the Quarkus default today, but it silently flips to `disabled` if
     # client-auth is ever set to `required` — pinned so that can't quietly kill :80.
     insecure-requests: enabled
-  native:
-    # Build-time only; irrelevant in JVM mode. Without it, native-image doesn't
-    # register the "https" URL protocol handler, and every outbound HTTPS fetch
-    # (i.e. resolving any https:// short link) throws MalformedURLException at
-    # runtime — this is the resolver's core job, so it can't be conditional.
-    enable-https-url-handler: true
 
 resolver:
   default-profile: android
