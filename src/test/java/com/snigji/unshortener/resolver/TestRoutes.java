@@ -23,6 +23,13 @@ final class TestRoutes {
                     html(req, "<html>ok</html>");
                 }
             }
+            case "/head-404" -> {
+                if ("HEAD".equalsIgnoreCase(req.method().name())) {
+                    req.response().setStatusCode(404).end();
+                } else {
+                    redirect(req, "/final");
+                }
+            }
             case "/meta-refresh" -> html(req,
                     "<html><head><meta http-equiv=\"refresh\" content=\"0;url=/final\"></head></html>");
             case "/js-redirect" -> html(req, "<html><script>window.location = buildUrl();</script></html>");

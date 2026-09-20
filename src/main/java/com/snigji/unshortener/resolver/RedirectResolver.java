@@ -40,7 +40,7 @@ import java.util.Set;
 public class RedirectResolver {
 
     private static final Logger LOG = Logger.getLogger(RedirectResolver.class);
-    private static final Set<Integer> GET_FALLBACK_STATUSES = Set.of(405, 501, 400, 403);
+    private static final Set<Integer> GET_FALLBACK_STATUSES = Set.of(404, 405, 501, 400, 403);
     private static final Set<Integer> REDIRECT_STATUSES = Set.of(301, 302, 303, 307, 308);
 
     @Inject

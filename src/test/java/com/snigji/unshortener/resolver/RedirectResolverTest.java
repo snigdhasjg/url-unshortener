@@ -124,6 +124,14 @@ class RedirectResolverTest {
     }
 
     @Test
+    void fallsBackToGetWhenHeadIsSpuriouslyNotFound() {
+        Result result = await(resolver.resolve(uri("/head-404"), PROFILE));
+        assertEquals(Status.RESOLVED, result.status());
+        assertEquals("GET", result.hops().get(0).method());
+        assertEquals(url("/final"), result.finalUrl());
+    }
+
+    @Test
     void followsMetaRefresh() {
         Result result = await(resolver.resolve(uri("/meta-refresh"), PROFILE));
         assertEquals(Status.RESOLVED, result.status());
