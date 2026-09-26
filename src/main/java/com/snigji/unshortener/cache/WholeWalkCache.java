@@ -15,7 +15,7 @@ import java.util.Optional;
  * exact repeats.
  *
  * <p>{@code @CacheResult} isn't used here: it doesn't support a per-entry TTL that
- * depends on the value (7d for success/partial, 5min for failure), and Quarkus's
+ * depends on the value (1d for success/partial, 5min for failure), and Quarkus's
  * Caffeine config only accepts one static {@code expire-after-write} per named
  * cache. Two physical caches, checked in order, gets us the asymmetric TTL —
  * exactly what the plan calls out as the alternative to an {@code Expiry} policy bean.
@@ -26,13 +26,13 @@ public class WholeWalkCache {
     private static final Logger LOG = Logger.getLogger(WholeWalkCache.class);
 
     private final Cache<String, Result> success = Caffeine.newBuilder()
-            .expireAfterWrite(Duration.ofDays(7))
-            .maximumSize(10_000)
+            .expireAfterWrite(Duration.ofDays(1))
+            .maximumSize(1_000)
             .build();
 
     private final Cache<String, Result> failure = Caffeine.newBuilder()
             .expireAfterWrite(Duration.ofMinutes(5))
-            .maximumSize(10_000)
+            .maximumSize(1_000)
             .build();
 
     public Optional<Result> get(String key) {

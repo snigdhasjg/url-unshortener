@@ -321,8 +321,10 @@ through the same tracker or affiliate domain, which happens constantly.
    a cookie, replaying hop 1 from cache skips it. Mark any hop whose response carried
    `Set-Cookie` as non-cacheable at the edge level.
 
-TTLs: ~7d for success, ~5min for failures. Caffeine has no per-entry TTL in Quarkus
-config, so this needs either two caches or an `expireAfter` policy bean.
+TTLs: ~1d for success, ~5min for failures (tightened from an original 7d to bound the
+stale-answer window, since there's no manual invalidation path). Caffeine has no
+per-entry TTL in Quarkus config, so this needs either two caches or an `expireAfter`
+policy bean.
 
 ---
 

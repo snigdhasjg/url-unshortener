@@ -27,13 +27,13 @@ public class EdgeCache {
     private static final Logger LOG = Logger.getLogger(EdgeCache.class);
 
     private final Cache<String, HopComputation> success = Caffeine.newBuilder()
-            .expireAfterWrite(Duration.ofDays(7))
-            .maximumSize(50_000)
+            .expireAfterWrite(Duration.ofDays(1))
+            .maximumSize(5_000)
             .build();
 
     private final Cache<String, HopComputation> failure = Caffeine.newBuilder()
             .expireAfterWrite(Duration.ofMinutes(5))
-            .maximumSize(50_000)
+            .maximumSize(5_000)
             .build();
 
     private static String key(URI url, String profile) {
