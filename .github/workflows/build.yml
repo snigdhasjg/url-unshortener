@@ -33,7 +33,7 @@ jobs:
           fetch-tags: true
           filter: blob:none
 
-      - uses: paulhatch/semantic-version@v6.0.3
+      - uses: paulhatch/semantic-version@v6.0.4
         id: semver
         with:
           tag_prefix: "v"
@@ -50,8 +50,6 @@ jobs:
     permissions:
       contents: write
       packages: write
-      id-token: write
-      attestations: write
     steps:
       - name: Clone the code
         uses: actions/checkout@v7
@@ -93,7 +91,7 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             sha="${{ needs.version.outputs.commit }}"
-            echo "tags=ghcr.io/${{ github.repository }}:sha-${sha:0:7}" >> "$GITHUB_OUTPUT"
+            echo "tags=ghcr.io/${{ github.repository }}:commit-${sha:0:7}" >> "$GITHUB_OUTPUT"
           else
             {
               echo "tags<<EOF"
@@ -111,7 +109,7 @@ jobs:
           file: src/main/docker/Dockerfile.jvm
           platforms: linux/amd64,linux/arm64
           provenance: true
-          sbom: true
+          sbom: false
           tags: ${{ steps.tags.outputs.tags }}
           labels: |
             org.opencontainers.image.description=Self-hosted URL unshortener. Given a shortened URL, walk the redirect chain and report the final destination plus the full path taken.
@@ -122,14 +120,6 @@ jobs:
             org.opencontainers.image.revision=${{ needs.version.outputs.commit }}
             org.opencontainers.image.url=https://github.com/${{ github.repository }}
           push: true
-
-      - name: Attest image
-        if: github.event_name == 'push'
-        uses: actions/attest@v4
-        with:
-          subject-name: ghcr.io/${{ github.repository }}
-          subject-digest: ${{ steps.build.outputs.digest }}
-          push-to-registry: true
 
       - name: Create tag
         if: github.event_name == 'push'
