@@ -30,6 +30,23 @@ final class TestRoutes {
                     redirect(req, "/final");
                 }
             }
+            case "/head-hangs" -> {
+                if ("HEAD".equalsIgnoreCase(req.method().name())) {
+                    // Never call end() — simulates a server that accepts the connection but
+                    // black-holes HEAD entirely (the dl.flipkart.com /s/ case). The client-side
+                    // request timeout is what eventually gives up on this, not the server.
+                } else {
+                    redirect(req, "/final");
+                }
+            }
+            case "/head-slow-but-ok" -> {
+                if ("HEAD".equalsIgnoreCase(req.method().name())) {
+                    io.vertx.core.Vertx.currentContext().owner()
+                            .setTimer(200, id -> redirect(req, "/final"));
+                } else {
+                    redirect(req, "/final");
+                }
+            }
             case "/meta-refresh" -> html(req,
                     "<html><head><meta http-equiv=\"refresh\" content=\"0;url=/final\"></head></html>");
             case "/js-redirect" -> html(req, "<html><script>window.location = buildUrl();</script></html>");

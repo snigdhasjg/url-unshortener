@@ -11,6 +11,7 @@ import com.snigji.unshortener.security.Guard;
 import com.snigji.unshortener.ua.UaProfile;
 import io.smallrye.mutiny.Uni;
 import io.vertx.core.http.HttpClosedException;
+import io.vertx.mutiny.core.Vertx;
 import io.vertx.mutiny.core.buffer.Buffer;
 import io.vertx.mutiny.ext.web.client.HttpRequest;
 import io.vertx.mutiny.ext.web.client.HttpResponse;
@@ -30,6 +31,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Walks a redirect chain one hop at a time, recursively, honoring one absolute
@@ -45,6 +47,9 @@ public class RedirectResolver {
 
     @Inject
     WebClient webClient;
+
+    @Inject
+    Vertx vertx;
 
     @Inject
     Guard guard;
@@ -125,26 +130,65 @@ public class RedirectResolver {
         guard.checkUrl(target);
         long hopStartNanos = System.nanoTime();
         LOG.debugf("HEAD %s (timeoutMs=%d)", target, timeoutMs);
-        return sendRequest(target, "HEAD", state, timeoutMs)
-                .flatMap(headResponse -> {
+
+        AtomicReference<String> lastMethodAttempted = new AtomicReference<>("HEAD");
+        // Shared by every path that can need a GET on this hop (a HEAD that never answers,
+        // a HEAD stuck behind a stale pooled connection, the hedge firing, or the existing
+        // fallback-status/HTML-scan cases below) so a hop never sends more than one GET no
+        // matter which of those triggers races for it first.
+        Uni<HttpResponse<Buffer>> getOnce = Uni.createFrom()
+                .deferred(() -> {
+                    lastMethodAttempted.set("GET");
+                    return sendRequest(target, "GET", state, remainingHopMs(hopStartNanos, timeoutMs));
+                })
+                .onFailure(RedirectResolver::isStaleConnection).retry().atMost(1)
+                .memoize().indefinitely();
+
+        Uni<Map.Entry<String, HttpResponse<Buffer>>> headLeg = sendRequest(target, "HEAD", state, timeoutMs)
+                .onFailure(RedirectResolver::isStaleConnection).retry().atMost(1)
+                .<Map.Entry<String, HttpResponse<Buffer>>>map(response -> new SimpleEntry<>("HEAD", response))
+                // A HEAD that fails outright (dl.flipkart.com's /s/ links: connection opens,
+                // HEAD is never answered) gets its GET immediately rather than waiting out the
+                // hedge delay below. A DNS failure is fatal for the GET too, so it propagates
+                // as-is instead of paying for a doomed request.
+                .onFailure().recoverWithUni(t -> isDnsFailure(t)
+                        ? Uni.createFrom().failure(t)
+                        : getOnce.<Map.Entry<String, HttpResponse<Buffer>>>map(response -> new SimpleEntry<>("GET", response)));
+
+        long hedgeDelayMs = Math.min(ResolverLimits.HEDGE_DELAY_MS, timeoutMs / 2);
+        Uni<Map.Entry<String, HttpResponse<Buffer>>> hedgeLeg = Uni.createFrom()
+                .<Void>emitter(emitter -> {
+                    long timerId = vertx.setTimer(hedgeDelayMs, id -> emitter.complete(null));
+                    emitter.onTermination(() -> vertx.cancelTimer(timerId));
+                })
+                .flatMap(ignored -> getOnce)
+                .<Map.Entry<String, HttpResponse<Buffer>>>map(response -> new SimpleEntry<>("GET", response));
+
+        return Uni.combine().any().of(headLeg, hedgeLeg)
+                .flatMap(entry -> {
+                    if (!"HEAD".equals(entry.getKey())) {
+                        return Uni.createFrom().item(entry);
+                    }
+                    HttpResponse<Buffer> headResponse = entry.getValue();
                     boolean fallbackStatus = GET_FALLBACK_STATUSES.contains(headResponse.statusCode());
                     // HEAD never carries a body per the HTTP spec, so a terminal-looking 200 HTML
                     // response needs an actual GET before we can scan it for meta-refresh/JS intent.
                     boolean needsBodyForHtmlScan = headResponse.statusCode() == 200 && isHtml(headResponse.getHeader("Content-Type"));
-                    if (fallbackStatus || needsBodyForHtmlScan) {
-                        LOG.debugf("HEAD %s -> %d, falling back to GET (fallbackStatus=%s, htmlScan=%s)",
-                                target, headResponse.statusCode(), fallbackStatus, needsBodyForHtmlScan);
-                        // The GET reuses the just-freed HEAD connection from the pool; if the
-                        // server closed it right as it went back in, the retry gets a fresh one.
-                        return sendRequest(target, "GET", state, timeoutMs)
-                                .onFailure(RedirectResolver::isStaleConnection).retry().atMost(1)
-                                .map(getResponse -> new SimpleEntry<>("GET", getResponse));
+                    if (!fallbackStatus && !needsBodyForHtmlScan) {
+                        return Uni.createFrom().item(entry);
                     }
-                    return Uni.createFrom().item(new SimpleEntry<>("HEAD", headResponse));
+                    LOG.debugf("HEAD %s -> %d, falling back to GET (fallbackStatus=%s, htmlScan=%s)",
+                            target, headResponse.statusCode(), fallbackStatus, needsBodyForHtmlScan);
+                    return getOnce.<Map.Entry<String, HttpResponse<Buffer>>>map(getResponse -> new SimpleEntry<>("GET", getResponse));
                 })
                 .map(entry -> interpret(target, entry.getKey(), entry.getValue(), via, state, hopStartNanos))
                 .onFailure().invoke(t -> LOG.debugf(t, "hop failed for %s", target))
-                .onFailure().recoverWithItem(t -> errorComputation(target, via, hopStartNanos, t));
+                .onFailure().recoverWithItem(t -> errorComputation(target, via, hopStartNanos, t, lastMethodAttempted.get()));
+    }
+
+    /** Bounds a fallback/hedge GET to what's left of the hop's own timeout, not a fresh full window. */
+    private long remainingHopMs(long hopStartNanos, long timeoutMs) {
+        return Math.max(ResolverLimits.FLOOR_MS, timeoutMs - elapsedMs(hopStartNanos));
     }
 
     private Uni<HttpResponse<Buffer>> sendRequest(URI target, String method, WalkState state, long timeoutMs) {
@@ -262,23 +306,25 @@ public class RedirectResolver {
         }
     }
 
-    private HopComputation errorComputation(URI target, HopVia via, long hopStartNanos, Throwable t) {
+    private HopComputation errorComputation(URI target, HopVia via, long hopStartNanos, Throwable t, String method) {
         long elapsedMs = elapsedMs(hopStartNanos);
         StopReason reason = classifyError(t);
         LOG.debugf("classified error for %s as %s: %s", target, reason, t.toString());
-        // Method is unknown here (the failure could have happened on the HEAD attempt or its GET
-        // fallback) — HEAD is the common case, since transport/DNS failures happen on first contact.
-        Hop hop = new Hop(target.toString(), "HEAD", null, null, via, null, null, elapsedMs);
+        Hop hop = new Hop(target.toString(), method, null, null, via, null, null, elapsedMs);
         return new HopComputation(hop, new HopOutcome.Terminal(new Destination.Unresolved(reason), reason), true);
     }
 
     private StopReason classifyError(Throwable t) {
+        return isDnsFailure(t) ? StopReason.DNS_ERROR : StopReason.TRANSPORT_ERROR;
+    }
+
+    private static boolean isDnsFailure(Throwable t) {
         for (Throwable cause = t; cause != null; cause = cause.getCause()) {
             if (cause instanceof UnknownHostException) {
-                return StopReason.DNS_ERROR;
+                return true;
             }
         }
-        return StopReason.TRANSPORT_ERROR;
+        return false;
     }
 
     private static boolean isStaleConnection(Throwable t) {

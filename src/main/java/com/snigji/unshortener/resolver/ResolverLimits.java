@@ -14,6 +14,13 @@ public final class ResolverLimits {
 
     public static final long PER_HOP_CAP_MS = 1500;
 
+    /**
+     * How long to wait for HEAD before racing it against a GET on the same hop. Set above
+     * the ~600ms band observed for healthy shorteners answering HEAD, so the hedge fires
+     * only for hosts that black-hole HEAD entirely (e.g. dl.flipkart.com's /s/ short links).
+     */
+    public static final long HEDGE_DELAY_MS = 700;
+
     /** Below this much remaining budget, don't bother attempting another hop. */
     public static final long FLOOR_MS = 400;
 

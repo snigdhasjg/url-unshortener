@@ -65,6 +65,7 @@ class RedirectResolverTest {
 
         resolver = new RedirectResolver();
         resolver.webClient = webClient;
+        resolver.vertx = mutinyVertx;
         resolver.guard = new AllowAllGuard();
         resolver.edgeCache = new EdgeCache();
     }
@@ -128,6 +129,25 @@ class RedirectResolverTest {
         Result result = await(resolver.resolve(uri("/head-404"), PROFILE));
         assertEquals(Status.RESOLVED, result.status());
         assertEquals("GET", result.hops().get(0).method());
+        assertEquals(url("/final"), result.finalUrl());
+    }
+
+    @Test
+    void hedgesToGetWhenHeadNeverAnswers() {
+        long startNanos = System.nanoTime();
+        Result result = await(resolver.resolve(uri("/head-hangs"), PROFILE));
+        long elapsedMs = java.time.Duration.ofNanos(System.nanoTime() - startNanos).toMillis();
+        assertEquals(Status.RESOLVED, result.status());
+        assertEquals("GET", result.hops().get(0).method());
+        assertEquals(url("/final"), result.finalUrl());
+        assertTrue(elapsedMs < ResolverLimits.RESOLVER_BUDGET.toMillis());
+    }
+
+    @Test
+    void doesNotHedgeWhenHeadAnswersWithinTheHedgeDelay() {
+        Result result = await(resolver.resolve(uri("/head-slow-but-ok"), PROFILE));
+        assertEquals(Status.RESOLVED, result.status());
+        assertEquals("HEAD", result.hops().get(0).method());
         assertEquals(url("/final"), result.finalUrl());
     }
 
