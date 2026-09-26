@@ -32,7 +32,7 @@ dependencies {
 }
 
 group = "com.snigji"
-version = "1.0.0-SNAPSHOT"
+version = providers.gradleProperty("appVersion").getOrElse("1.0.0-SNAPSHOT")
 
 java {
     sourceCompatibility = JavaVersion.VERSION_25
