@@ -388,9 +388,13 @@ From `comment-analyzer`. No comment rot of the "obviously redundant" kind
 turned up — all 30 inline `//` comments in `src/main/java` carry real
 rationale.
 
+**Status: fixed**, all six. Doc-only; `./gradlew test`/`build` both still
+pass, as expected for comment/config-comment changes.
+
 - **`NetworkConfig.java:13-14`** still references native-image behavior,
   which was dropped in an earlier commit that updated CLAUDE.md/plan.md/
   application.yml/Dockerfiles but missed this one comment.
+  **Fixed:** dropped the "differs under native-image" clause.
 - **CLAUDE.md itself has drifted from the code.** It says `UrlNormalizer`,
   "like `RedirectResolver`," throws `BadRequestException` — but
   `RedirectResolver`'s own class Javadoc says the opposite ("Never throws...
@@ -398,20 +402,35 @@ rationale.
   zero `BadRequestException` references in that file. The in-code comment is
   the accurate one; CLAUDE.md's wording should be fixed (drop "like
   RedirectResolver").
+  **Fixed:** dropped the phrase, and added a sentence pointing at
+  `RedirectResolver`'s own Javadoc so this doesn't drift silently again.
 - `Hop.remoteIp` has no in-code comment noting it's always `null` — that's
   currently documented only in CLAUDE.md, so a consumer of the wire JSON has
   no in-repo signal it's a known gap rather than a bug.
+  **Fixed:** added a comment at the field itself.
 - The `android`→`desktop` default-profile deviation lives only in this
   session's private memory, not the repo (`application.yml:14` has zero
   comment on it, and it contradicts plan.md's explicit "Default profile:
   android. Not cosmetic..." paragraph). Worth a short comment recording the
   deviation so it survives outside the memory store.
+  **Fixed:** added a comment above `default-profile: desktop` in
+  `application.yml`, and a footnote in `docs/plan.md`'s own paragraph citing
+  the commit (`644ca0e`) that made the change and confirming it's
+  intentional, not drift — so both sides of the contradiction now
+  acknowledge each other instead of one silently overriding the other.
 - `UaProfile.java:7`'s "exact order a real browser would send them" is a
   strong, unverified claim — flagged as possibly wrong (real Chrome sends
   `sec-ch-ua*` before `User-Agent`) but not confirmed against a HAR capture.
+  **Fixed:** reworded to describe what the code actually does (the order
+  `from()` builds the list in) rather than an unverified claim about real
+  browser wire order, and noted the specific doubt (Chrome is understood to
+  send `Sec-CH-UA*` before `User-Agent`) so a future HAR capture has
+  something concrete to check.
 - `UaProfilesConfig.java`'s comments reference `application.properties` and an
   outdated "shipping only android on day one" framing — the file is
   `application.yml` and `desktop` already exists as the default.
+  **Fixed:** corrected the filename and dropped the day-one framing in favor
+  of stating what's actually configured today.
 
 **Positives called out** (worth preserving as house style): `Status.from()`'s
 Javadoc, both cache classes' TTL-rationale comments, `Guard.java` as "a model
@@ -421,9 +440,13 @@ blanket statement on the same topic).
 
 ---
 
-## Suggested next step
+## Status
 
-Fix Tier 1 + Tier 2 together on a branch (they share root causes and the
-`StopReason.INTERNAL_ERROR` addition), run `./gradlew test`, then `/simplify`
-+ `/security-review` on that diff before opening a PR. Tier 3–5 are lower
-risk and can follow separately.
+All five tiers fixed, each on `main` as its own commit (trunk-based, per
+project convention): Tier 1 (`a8f395e`), Tier 2 (`43dc4be`), Tier 3
+(`bca9ad6`), Tier 4 (`4d880dd`), Tier 5 (uncommitted as of this writing).
+`./gradlew test` (65/65) and `./gradlew build` pass after every tier.
+
+Suggested next step: `/simplify` + `/security-review` on the accumulated
+diff before it's considered done, since neither has run against these
+changes yet.

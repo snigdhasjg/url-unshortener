@@ -4,7 +4,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-/** Resolved header set for a named profile, in the exact order a real browser would send them. */
+/**
+ * Resolved header set for a named profile, in the order {@link #from} builds them —
+ * User-Agent first, then the Sec-CH-UA* client hints, then Accept/Accept-Language.
+ * Not verified against a real browser's actual wire order (a HAR capture would confirm
+ * or refute this; real Chrome is understood to send {@code Sec-CH-UA*} before
+ * {@code User-Agent}), so don't treat this ordering as a deliberately-matched fingerprint.
+ */
 public record UaProfile(String name, List<Map.Entry<String, String>> headers) {
 
     /**

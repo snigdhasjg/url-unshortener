@@ -6,6 +6,9 @@ public record Hop(
         Integer statusCode,
         String location,
         HopVia via,
+        // Always null today — Vert.x's WebClient response doesn't expose the underlying
+        // connection without dropping to raw HttpClient. A known gap, not a bug; see
+        // CLAUDE.md's "Not yet done".
         String remoteIp,
         String contentType,
         long elapsedMs) {

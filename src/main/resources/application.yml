@@ -11,6 +11,11 @@ quarkus:
     insecure-requests: enabled
 
 resolver:
+  # Deliberate deviation from plan.md's stated rationale for defaulting to `android`
+  # (shorteners do real device targeting, so an Android UA reveals the destination a
+  # mobile user would actually land on) — confirmed intentional, not stale config left
+  # over from adding the `desktop` profile. v2 (UnshortenResource) is unaffected: it
+  # hardcodes `android` regardless of this setting.
   default-profile: desktop
 
 "%dev":

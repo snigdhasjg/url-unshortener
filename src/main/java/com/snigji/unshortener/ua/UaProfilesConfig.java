@@ -8,8 +8,9 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * Profiles are named config, not hardcoded strings — see application.properties.
- * Shipping only "android" on day one shouldn't require surgery to add "desktop" later.
+ * Profiles are named config, not hardcoded strings — see {@code application.yml}'s
+ * {@code ua-profiles} section, which today configures both {@code android} and
+ * {@code desktop}.
  */
 @ConfigMapping(prefix = "ua-profiles")
 public interface UaProfilesConfig {

@@ -335,6 +335,10 @@ policy bean.
 Default profile: **android**. Not cosmetic — shorteners do real device targeting
 (Bitly, Branch, AppsFlyer), so an Android UA gives the destination we'd actually land on.
 
+`application.yml`'s `resolver.default-profile` currently overrides this to `desktop`
+(commit `644ca0e`) — a confirmed intentional deviation, not drift. v2 (`UnshortenResource`)
+is unaffected: it hardcodes `android` regardless of this setting.
+
 Use Chrome's **reduced** UA format. UA Reduction is complete; real Chrome on Android
 reports a frozen `Android 10` on model `K` regardless of hardware. Sending
 `Android 14; Pixel 8` would be *more* conspicuous, not less.
