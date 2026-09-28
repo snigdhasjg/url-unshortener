@@ -58,11 +58,43 @@ public class RedirectResolver {
     EdgeCache edgeCache;
 
     public Uni<Result> resolve(URI url, UaProfile profile) {
-        WalkState state = new WalkState(url.toString(), profile);
+        AtomicReference<WalkState> stateRef = new AtomicReference<>();
         long startNanos = System.nanoTime();
-        LOG.debugf("resolve start: url=%s profile=%s", url, profile.name());
-        return step(url, state, HopVia.INITIAL)
-                .map(outcome -> buildResult(url, state, outcome, startNanos));
+        // The whole body is wrapped in `deferred` for a reason beyond laziness: nothing
+        // downstream of `step()` for hop 1 is itself wrapped in a Uni factory (unlike
+        // fetchHop's HEAD/GET legs), so without this, hop 1's entire synchronous call chain
+        // — including `guard.checkUrl`, a documented no-op today (AllowAllGuard) but one
+        // whose Javadoc describes a real implementation designed to reject/throw — would
+        // run eagerly the moment `resolve` is called, before any Uni exists to attach a
+        // failure handler to. `deferred` turns a thrown exception there into a Uni failure
+        // instead of letting it escape past every `onFailure()` in this class.
+        return Uni.createFrom().<Result>deferred(() -> {
+            WalkState state = new WalkState(url.toString(), profile);
+            stateRef.set(state);
+            LOG.debugf("resolve start: url=%s profile=%s", url, profile.name());
+            return step(url, state, HopVia.INITIAL)
+                    .map(outcome -> buildResult(url, state, outcome, startNanos));
+        }).onFailure().invoke(t -> LOG.errorf(t, "unexpected internal failure resolving %s", url))
+          .onFailure().recoverWithItem(t -> internalErrorResult(url, stateRef.get()));
+    }
+
+    /**
+     * Safety net for {@code resolve()}'s own boundary, distinct from {@code fetchHop}'s
+     * per-hop recovery below — it exists for exactly the "never rely on fetchHop happening
+     * to catch everything" case: a bug in {@code buildResult} itself, or an exception from
+     * {@code guard.checkUrl} once a real {@link com.snigji.unshortener.security.Guard} is
+     * wired in. Reports whatever hops were already gathered, same as a normal partial —
+     * unlike {@link #buildResult}, there's no extra terminal hop to subtract here, since
+     * the crash happened before one could be constructed for the failing attempt.
+     */
+    private Result internalErrorResult(URI url, WalkState state) {
+        List<Hop> hops = state == null ? List.of() : state.hops();
+        boolean anyHopCompleted = !hops.isEmpty();
+        String finalUrl = hops.isEmpty() ? url.toString() : hops.getLast().url();
+        long budgetRemainingMs = state == null ? 0 : state.remainingMs();
+        return new Result(url.toString(), finalUrl, new Destination.Unresolved(StopReason.INTERNAL_ERROR),
+                Status.from(StopReason.INTERNAL_ERROR, anyHopCompleted), StopReason.INTERNAL_ERROR, hops, 0,
+                budgetRemainingMs, false, false);
     }
 
     private Uni<WalkOutcome> step(URI current, WalkState state, HopVia via) {
@@ -182,7 +214,7 @@ public class RedirectResolver {
                             target, headResponse.statusCode(), fallbackStatus, needsBodyForHtmlScan);
                     return getOnce.<Map.Entry<String, HttpResponse<Buffer>>>map(getResponse -> new SimpleEntry<>("GET", getResponse));
                 })
-                .map(entry -> interpret(target, entry.getKey(), entry.getValue(), via, state, hopStartNanos))
+                .map(entry -> interpretSafely(target, entry.getKey(), entry.getValue(), via, state, hopStartNanos))
                 .onFailure().invoke(t -> LOG.debugf(t, "hop failed for %s", target))
                 .onFailure().recoverWithItem(t -> errorComputation(target, via, hopStartNanos, t, lastMethodAttempted.get()));
     }
@@ -213,6 +245,30 @@ public class RedirectResolver {
             request.putHeader("Range", "bytes=0-" + (ResolverLimits.MAX_BODY_BYTES - 1));
         }
         return request.timeout(timeoutMs).send();
+    }
+
+    /**
+     * Wraps {@link #interpret} so a bug in our own response handling (cookie parsing,
+     * meta-refresh/JS scanning, intent/market URL parsing) can't be conflated with a real
+     * network failure — the outer {@code onFailure} below this method's call site only ever
+     * sees genuine transport/DNS exceptions now, and {@code classifyError} never has to
+     * guess whether a caught exception came from the wire or from a bug. Logged at ERROR,
+     * unlike a real transport failure's DEBUG: this should never happen and needs fixing,
+     * not silent retrying.
+     */
+    private HopComputation interpretSafely(URI target, String method, HttpResponse<Buffer> response, HopVia via,
+            WalkState state, long hopStartNanos) {
+        try {
+            return interpret(target, method, response, via, state, hopStartNanos);
+        } catch (RuntimeException e) {
+            LOG.errorf(e, "internal error interpreting %s response for %s", method, target);
+            long elapsedMs = elapsedMs(hopStartNanos);
+            Hop hop = new Hop(target.toString(), method, response.statusCode(), null, via, null,
+                    response.getHeader("Content-Type"), elapsedMs);
+            return new HopComputation(hop,
+                    new HopOutcome.Terminal(new Destination.Unresolved(StopReason.INTERNAL_ERROR), StopReason.INTERNAL_ERROR),
+                    false);
+        }
     }
 
     private HopComputation interpret(URI target, String method, HttpResponse<Buffer> response, HopVia via,

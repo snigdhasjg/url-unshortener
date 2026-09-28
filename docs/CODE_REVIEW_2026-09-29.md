@@ -124,6 +124,9 @@ for the diff; not committed yet.
 These come from `silent-failure-hunter` and form one connected root cause —
 worth doing together, likely via a single new `StopReason.INTERNAL_ERROR`.
 
+**Status: fixed**, all three, via a single `StopReason.INTERNAL_ERROR` as
+suggested. See the working tree for the diff; not committed yet.
+
 1. **CRITICAL — `RedirectResolver.fetchHop`'s catch-all conflates programming
    bugs with network failures.** (`RedirectResolver.java:184-186, 309-319`)
    The `onFailure()` after `interpret()` has no exception-type filter, so it
@@ -133,6 +136,19 @@ worth doing together, likely via a single new `StopReason.INTERNAL_ERROR`.
    code defect is invisible in both the `Result` model and the logs.
    → Either narrow the recovery to known transport exception types, or add a
    distinct `StopReason.INTERNAL_ERROR` bucket logged at `LOG.error`.
+   **Fixed:** added `interpretSafely`, a thin wrapper around `interpret()` that
+   catches only what `interpret()` itself (and everything it calls — cookie
+   parsing, meta-refresh/JS scanning, `IntentUrlParser`) can throw, converting
+   it to `HopComputation`/`StopReason.INTERNAL_ERROR` logged at `LOG.error`.
+   The existing outer `onFailure()`/`classifyError` is untouched and now only
+   ever sees genuine transport/DNS exceptions from the HEAD/GET legs — no
+   guessing required. Marked non-cacheable, so a code bug is never replayed
+   from `EdgeCache` for up to 5 minutes as if it were a stable outcome. Not
+   directly testable today: every callee `interpret()` reaches is already
+   `Optional`-returning or self-catching (including after the Tier 1 fixes to
+   `UrlNormalizer`/`IntentUrlParser`), so there's currently no reachable input
+   that trips it — this is deliberate defense-in-depth for a regression, not
+   a live bug.
 
 2. **HIGH — no failure-path handling in `ResolverService`/REST layer breaks
    the real client contract.** `.ifNoItem().after(...)` in both resources
@@ -147,6 +163,13 @@ worth doing together, likely via a single new `StopReason.INTERNAL_ERROR`.
    → Add `.onFailure().recoverWithItem(...)` in `ResolverService.resolve()` (or
    each resource) converting any unexpected failure into a proper
    `Result`/`UnshortenResponse.failure(...)`.
+   **Fixed** exactly as suggested: `ResolverService.resolve()` now has its own
+   `onFailure().recoverWithItem(...)`, logged at `LOG.error`, converting any
+   failure that reaches this facade into a `Result` with
+   `Status.FAILED`/`StopReason.INTERNAL_ERROR` — which both `ResolveResource`
+   and `UnshortenMapper` already know how to render correctly (the latter as
+   `success:false` with a body, not a bare 500). Covered by a new
+   `ResolverServiceTest` using a stubbed `RedirectResolver` that always fails.
 
 3. **MEDIUM — the "never throws" guarantee is emergent, not enforced.**
    `guard.checkUrl(target)` runs synchronously on hop 1, *outside* any Mutiny
@@ -156,6 +179,18 @@ worth doing together, likely via a single new `StopReason.INTERNAL_ERROR`.
    this is a landmine for whoever wires in a real `Guard`.
    → Add one explicit safety net at `resolve()`'s true boundary rather than
    relying on `fetchHop` happening to catch everything.
+   **Fixed:** `RedirectResolver.resolve()`'s whole body now runs inside
+   `Uni.createFrom().deferred(...)`, with its own `onFailure().recoverWithItem(...)`
+   at the end. This closes a gap wider than just the guard call: without
+   `deferred`, hop 1's entire synchronous chain (`step`/`computeHop`/`fetchHop`,
+   including `guard.checkUrl`) runs eagerly the moment `resolve()` is called,
+   before any `Uni` exists for a failure handler to attach to — a thrown
+   exception there would have escaped past every `onFailure()` in the class,
+   `fetchHop`'s included. The recovery path reports whatever hops were already
+   gathered via a captured `WalkState`, so a bug late in a chain still returns
+   a proper partial instead of discarding the hops already walked. Covered by
+   a new `neverThrowsWhenGuardRejectsSynchronously` test using a `Guard` stub
+   that throws.
 
 ---
 

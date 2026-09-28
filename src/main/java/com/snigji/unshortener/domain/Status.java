@@ -26,11 +26,13 @@ public enum Status {
      * this is a deliberate reading of the spec's rich-API definition ("couldn't
      * complete even the first hop") over the compat-endpoint table, which only
      * discusses the common case where those two stop reasons occur on hop 1.
+     * {@code internal_error} (a resolver bug, not the target's fault) follows the
+     * same rule: still {@code partial} if earlier hops already succeeded.
      */
     public static Status from(StopReason reason, boolean anyHopCompleted) {
         return switch (reason) {
             case TERMINAL_RESPONSE, NON_HTTP_SCHEME -> RESOLVED;
-            case TRANSPORT_ERROR, DNS_ERROR -> anyHopCompleted ? PARTIAL : FAILED;
+            case TRANSPORT_ERROR, DNS_ERROR, INTERNAL_ERROR -> anyHopCompleted ? PARTIAL : FAILED;
             case DEADLINE, MAX_HOPS, LOOP, JS_SUSPECTED -> PARTIAL;
         };
     }

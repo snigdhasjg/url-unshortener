@@ -290,8 +290,9 @@ only the documented three ignore it.
 ```
 
 Use the `stop_reason` value as the error string. Free diagnostics, zero cost. Only
-`transport_error` and `dns_error` can reach this path (plus input validation); every
-other `stop_reason` produces a `partial`, and therefore `success: true`.
+`transport_error`, `dns_error` and `internal_error` (a resolver bug that bypassed its own
+"never throws" guarantee — see CLAUDE.md) can reach this path (plus input validation);
+every other `stop_reason` produces a `partial`, and therefore `success: true`.
 
 ### Not implemented
 

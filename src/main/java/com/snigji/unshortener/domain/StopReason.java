@@ -10,7 +10,9 @@ public enum StopReason {
     NON_HTTP_SCHEME("non_http_scheme"),
     JS_SUSPECTED("js_suspected"),
     TRANSPORT_ERROR("transport_error"),
-    DNS_ERROR("dns_error");
+    DNS_ERROR("dns_error"),
+    /** A bug in our own code, not the target's — distinct from a real network failure. */
+    INTERNAL_ERROR("internal_error");
 
     private final String wire;
 

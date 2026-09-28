@@ -49,7 +49,25 @@ public class ResolverService {
 
         LOG.debugf("whole-walk cache miss for %s, resolving", cacheKey);
         return redirectResolver.resolve(url, profile)
-                .invoke(result -> wholeWalkCache.put(cacheKey, result));
+                .invoke(result -> wholeWalkCache.put(cacheKey, result))
+                .onFailure().invoke(t -> LOG.errorf(t,
+                        "resolve() failed unexpectedly for %s despite RedirectResolver's own safety net", url))
+                .onFailure().recoverWithItem(t -> internalErrorResult(url));
+    }
+
+    /**
+     * Backstop of last resort. {@code RedirectResolver.resolve()} already guarantees it
+     * never throws, but this facade does its own work around that call — cache lookup and
+     * write, UA profile resolution — so if any of that breaks, both REST resources still
+     * need a proper {@link Result}, not a bare 500. Per project knowledge, the real v2
+     * compat client ignores HTTP status entirely and requires success/unshortened_url in
+     * the body, so this is the one scenario the whole Result/Status design exists to prevent.
+     */
+    private Result internalErrorResult(URI url) {
+        String rendered = url.toString();
+        return new Result(rendered, rendered, new Destination.Unresolved(StopReason.INTERNAL_ERROR),
+                Status.from(StopReason.INTERNAL_ERROR, false), StopReason.INTERNAL_ERROR, List.of(), 0, 0, false,
+                false);
     }
 
     /**

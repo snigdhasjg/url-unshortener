@@ -7,6 +7,7 @@ import com.snigji.unshortener.domain.Result;
 import com.snigji.unshortener.domain.Status;
 import com.snigji.unshortener.domain.StopReason;
 import com.snigji.unshortener.security.AllowAllGuard;
+import com.snigji.unshortener.security.Guard;
 import com.snigji.unshortener.ua.UaProfile;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
@@ -16,6 +17,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import java.net.InetAddress;
 import java.net.URI;
 import java.util.List;
 import java.util.Map;
@@ -209,6 +211,32 @@ class RedirectResolverTest {
             puts++;
             super.put(url, profile, computation);
         }
+    }
+
+    @Test
+    void neverThrowsWhenGuardRejectsSynchronously() {
+        // Exercises resolve()'s own boundary safety net (Tier 2 #3): AllowAllGuard is a
+        // no-op today, but Guard's own Javadoc documents a real implementation designed to
+        // reject/throw, and checkUrl runs synchronously on hop 1, outside any Uni wrapper.
+        RedirectResolver guardedResolver = new RedirectResolver();
+        guardedResolver.webClient = resolver.webClient;
+        guardedResolver.vertx = mutinyVertx;
+        guardedResolver.edgeCache = new EdgeCache();
+        guardedResolver.guard = new Guard() {
+            @Override
+            public void checkUrl(URI url) {
+                throw new SecurityException("blocked for test");
+            }
+
+            @Override
+            public void checkIp(String host, InetAddress ip) {
+            }
+        };
+
+        Result result = await(guardedResolver.resolve(uri("/start"), PROFILE));
+        assertEquals(Status.FAILED, result.status());
+        assertEquals(StopReason.INTERNAL_ERROR, result.stopReason());
+        assertInstanceOf(Destination.Unresolved.class, result.destination());
     }
 
     @Test
