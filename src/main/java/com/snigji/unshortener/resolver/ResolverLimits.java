@@ -7,10 +7,10 @@ public final class ResolverLimits {
     /** Absolute API ceiling. Never breach this — see {@code ResolveResource}'s hard cutoff. */
     public static final Duration API_CEILING = Duration.ofMillis(5000);
 
-    /** Budget actually handed to the resolver; the remainder is {@link #RESPONSE_RESERVE}. */
-    public static final Duration RESOLVER_BUDGET = Duration.ofMillis(4800);
-
     public static final Duration RESPONSE_RESERVE = Duration.ofMillis(200);
+
+    /** Budget actually handed to the resolver; the remainder is {@link #RESPONSE_RESERVE}. */
+    public static final Duration RESOLVER_BUDGET = API_CEILING.minus(RESPONSE_RESERVE);
 
     public static final long PER_HOP_CAP_MS = 1500;
 
@@ -28,9 +28,18 @@ public final class ResolverLimits {
 
     public static final long MAX_BODY_BYTES = 64 * 1024;
 
+    /** {@code WebClientProducer}'s connect timeout. */
+    public static final int CONNECT_TIMEOUT_MS = 2000;
+
+    /** {@code WebClientProducer}'s max connection pool size. */
+    public static final int MAX_POOL_SIZE = 64;
+
     // Fails class-load, not just documentation, if these constants drift out of the
     // relationship their own comments claim. Plain `assert` isn't used: that's a no-op
-    // unless the JVM runs with -ea, and this needs to hold in production too.
+    // unless the JVM runs with -ea, and this needs to hold in production too. The first
+    // check is now tautological — RESOLVER_BUDGET is defined in terms of RESPONSE_RESERVE
+    // rather than as an independent literal — but it's cheap insurance against a future
+    // edit reverting that back to a literal.
     static {
         if (!RESOLVER_BUDGET.plus(RESPONSE_RESERVE).equals(API_CEILING)) {
             throw new ExceptionInInitializerError("RESOLVER_BUDGET + RESPONSE_RESERVE must equal API_CEILING");

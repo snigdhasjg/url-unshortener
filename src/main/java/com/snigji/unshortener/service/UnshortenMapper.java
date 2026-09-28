@@ -3,7 +3,6 @@ package com.snigji.unshortener.service;
 import com.snigji.unshortener.domain.Destination;
 import com.snigji.unshortener.domain.Result;
 import com.snigji.unshortener.domain.Status;
-import com.snigji.unshortener.rest.UnshortenResponse;
 import jakarta.enterprise.context.ApplicationScoped;
 
 import java.net.URI;

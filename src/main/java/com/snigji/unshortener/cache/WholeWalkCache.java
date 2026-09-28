@@ -7,6 +7,7 @@ import com.snigji.unshortener.domain.Status;
 import jakarta.enterprise.context.ApplicationScoped;
 import org.jboss.logging.Logger;
 
+import java.net.URI;
 import java.time.Duration;
 import java.util.Optional;
 
@@ -35,17 +36,23 @@ public class WholeWalkCache {
             .maximumSize(1_000)
             .build();
 
-    public Optional<Result> get(String key) {
-        Result result = success.getIfPresent(key);
+    private static String key(URI url, String profile) {
+        return profile + "|" + url;
+    }
+
+    public Optional<Result> get(URI url, String profile) {
+        String k = key(url, profile);
+        Result result = success.getIfPresent(k);
         if (result == null) {
-            result = failure.getIfPresent(key);
+            result = failure.getIfPresent(k);
         }
         return Optional.ofNullable(result);
     }
 
     /** Never throws on a resolution failure — {@code Result} always carries success/failure explicitly. */
-    public void put(String key, Result result) {
-        LOG.debugf("whole-walk cache put %s into %s", key, result.status() == Status.FAILED ? "failure" : "success");
-        (result.status() == Status.FAILED ? failure : success).put(key, result);
+    public void put(URI url, String profile, Result result) {
+        String k = key(url, profile);
+        LOG.debugf("whole-walk cache put %s into %s", k, result.status() == Status.FAILED ? "failure" : "success");
+        (result.status() == Status.FAILED ? failure : success).put(k, result);
     }
 }

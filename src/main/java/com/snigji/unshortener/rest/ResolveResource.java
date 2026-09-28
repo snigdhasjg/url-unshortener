@@ -14,7 +14,6 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 
 import java.net.URI;
-import java.util.Optional;
 
 @Path("/api/v1/resolve")
 public class ResolveResource {
@@ -25,7 +24,7 @@ public class ResolveResource {
     @GET
     @Produces(MediaType.APPLICATION_JSON)
     public Uni<Response> resolve(@QueryParam("url") @NotNull URI url, @QueryParam("profile") String profile) {
-        return resolverService.resolve(url, Optional.ofNullable(profile))
+        return resolverService.resolve(url, profile)
                 .ifNoItem()
                 .after(ResolverLimits.API_CEILING)
                 .recoverWithItem(() -> resolverService.hardCutoffFallback(url))

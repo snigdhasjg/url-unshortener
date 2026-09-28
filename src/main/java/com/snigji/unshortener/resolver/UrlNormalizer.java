@@ -36,9 +36,8 @@ public final class UrlNormalizer {
         } catch (URISyntaxException e) {
             throw new BadRequestException("malformed url: " + e.getMessage(), e);
         }
-        String scheme = uri.getScheme();
-        if (scheme == null || !(scheme.equalsIgnoreCase("http") || scheme.equalsIgnoreCase("https"))) {
-            throw new BadRequestException("unsupported input scheme: " + scheme);
+        if (!isHttp(uri)) {
+            throw new BadRequestException("unsupported input scheme: " + uri.getScheme());
         }
         if (uri.getHost() == null) {
             throw new BadRequestException("url has no host");

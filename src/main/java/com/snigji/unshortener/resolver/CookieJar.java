@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 /**
  * Per-resolution cookie jar (never shared across requests — a fresh instance lives
@@ -18,9 +19,6 @@ public final class CookieJar {
     private final Map<String, Map<String, String>> byDomain = new LinkedHashMap<>();
 
     public void store(String responseHost, List<String> setCookieHeaders) {
-        if (setCookieHeaders == null) {
-            return;
-        }
         for (String header : setCookieHeaders) {
             String[] nameValue = header.split(";", 2)[0].split("=", 2);
             if (nameValue.length != 2) {
@@ -37,8 +35,8 @@ public final class CookieJar {
     private Optional<String> extractDomain(String setCookieHeader) {
         for (String attr : setCookieHeader.split(";")) {
             String trimmed = attr.trim();
-            if (trimmed.regionMatches(true, 0, "Domain=", 0, 7)) {
-                String domain = trimmed.substring(7).trim();
+            if (trimmed.regionMatches(true, 0, "Domain=", 0, "Domain=".length())) {
+                String domain = trimmed.substring("Domain=".length()).trim();
                 if (domain.startsWith(".")) {
                     domain = domain.substring(1);
                 }
@@ -63,13 +61,9 @@ public final class CookieJar {
         if (matched.isEmpty()) {
             return Optional.empty();
         }
-        StringBuilder sb = new StringBuilder();
-        matched.forEach((k, v) -> {
-            if (!sb.isEmpty()) {
-                sb.append("; ");
-            }
-            sb.append(k).append('=').append(v);
-        });
-        return Optional.of(sb.toString());
+        String header = matched.entrySet().stream()
+                .map(e -> e.getKey() + "=" + e.getValue())
+                .collect(Collectors.joining("; "));
+        return Optional.of(header);
     }
 }

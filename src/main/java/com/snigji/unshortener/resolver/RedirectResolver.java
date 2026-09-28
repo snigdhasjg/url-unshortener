@@ -25,7 +25,6 @@ import java.net.URISyntaxException;
 import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.AbstractMap.SimpleEntry;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -42,7 +41,12 @@ import java.util.concurrent.atomic.AtomicReference;
 public class RedirectResolver {
 
     private static final Logger LOG = Logger.getLogger(RedirectResolver.class);
-    private static final Set<Integer> GET_FALLBACK_STATUSES = Set.of(404, 405, 501, 400, 403);
+    // Ad-hoc, grown one host-quirk at a time rather than a general rule (e.g. "any non-2xx/
+    // 3xx HEAD status triggers a confirmatory GET") — each entry is a status a real host was
+    // observed sending for a HEAD it couldn't or wouldn't answer meaningfully: 400/403 (HEAD
+    // rejected by a WAF or quirky host that answers GET fine), 404/405 (HEAD reported as
+    // missing/not-allowed on a resource that exists), 501 (HEAD not implemented at all).
+    private static final Set<Integer> GET_FALLBACK_STATUSES = Set.of(400, 403, 404, 405, 501);
     private static final Set<Integer> REDIRECT_STATUSES = Set.of(301, 302, 303, 307, 308);
 
     @Inject
@@ -69,7 +73,7 @@ public class RedirectResolver {
         // failure handler to. `deferred` turns a thrown exception there into a Uni failure
         // instead of letting it escape past every `onFailure()` in this class.
         return Uni.createFrom().<Result>deferred(() -> {
-            WalkState state = new WalkState(url.toString(), profile);
+            WalkState state = new WalkState(profile);
             stateRef.set(state);
             LOG.debugf("resolve start: url=%s profile=%s", url, profile.name());
             return step(url, state, HopVia.INITIAL)
@@ -97,18 +101,18 @@ public class RedirectResolver {
                 budgetRemainingMs, false, false);
     }
 
-    private Uni<WalkOutcome> step(URI current, WalkState state, HopVia via) {
+    private Uni<HopOutcome.Terminal> step(URI current, WalkState state, HopVia via) {
         if (!state.markVisited(current)) {
             LOG.debugf("stop LOOP at %s (hop %d, via=%s)", current, state.hopCount(), via);
-            return Uni.createFrom().item(new WalkOutcome(new Destination.Web(current), StopReason.LOOP));
+            return stop(current, StopReason.LOOP);
         }
         if (state.atMaxHops()) {
             LOG.debugf("stop MAX_HOPS at %s (%d hops reached)", current, state.hopCount());
-            return Uni.createFrom().item(new WalkOutcome(new Destination.Web(current), StopReason.MAX_HOPS));
+            return stop(current, StopReason.MAX_HOPS);
         }
         if (state.belowFloor()) {
             LOG.debugf("stop DEADLINE at %s (%dms remaining, below floor)", current, state.remainingMs());
-            return Uni.createFrom().item(new WalkOutcome(new Destination.Web(current), StopReason.DEADLINE));
+            return stop(current, StopReason.DEADLINE);
         }
 
         long hopTimeoutMs = state.hopTimeoutMs();
@@ -126,10 +130,14 @@ public class RedirectResolver {
                         case HopOutcome.Terminal t -> {
                             LOG.debugf("hop %d terminal: %s reason=%s destination=%s",
                                     state.hopCount(), current, t.reason(), t.destination());
-                            yield Uni.createFrom().item(new WalkOutcome(t.destination(), t.reason()));
+                            yield Uni.createFrom().item(t);
                         }
                     };
                 });
+    }
+
+    private static Uni<HopOutcome.Terminal> stop(URI current, StopReason reason) {
+        return Uni.createFrom().item(new HopOutcome.Terminal(new Destination.Web(current), reason));
     }
 
     private Uni<HopComputation> computeHop(URI target, WalkState state, HopVia via, long timeoutMs) {
@@ -153,9 +161,14 @@ public class RedirectResolver {
         if (original.via() == via) {
             return computation;
         }
-        Hop updated = new Hop(original.url(), original.method(), original.statusCode(), original.location(),
-                via, original.remoteIp(), original.contentType(), original.elapsedMs());
-        return new HopComputation(updated, computation.outcome(), computation.cacheable());
+        return new HopComputation(original.withVia(via), computation.outcome(), computation.cacheable());
+    }
+
+    /** Tags a response with which HTTP method actually produced it — HEAD, or a GET fallback. */
+    private record MethodResponse(String method, HttpResponse<Buffer> response) {}
+
+    private static Uni<HttpResponse<Buffer>> withStaleConnectionRetry(Uni<HttpResponse<Buffer>> uni) {
+        return uni.onFailure(RedirectResolver::isStaleConnection).retry().atMost(1);
     }
 
     private Uni<HopComputation> fetchHop(URI target, WalkState state, HopVia via, long timeoutMs) {
@@ -168,53 +181,51 @@ public class RedirectResolver {
         // a HEAD stuck behind a stale pooled connection, the hedge firing, or the existing
         // fallback-status/HTML-scan cases below) so a hop never sends more than one GET no
         // matter which of those triggers races for it first.
-        Uni<HttpResponse<Buffer>> getOnce = Uni.createFrom()
+        Uni<HttpResponse<Buffer>> getOnce = withStaleConnectionRetry(Uni.createFrom()
                 .deferred(() -> {
                     lastMethodAttempted.set("GET");
                     return sendRequest(target, "GET", state, remainingHopMs(hopStartNanos, timeoutMs));
-                })
-                .onFailure(RedirectResolver::isStaleConnection).retry().atMost(1)
+                }))
                 .memoize().indefinitely();
 
-        Uni<Map.Entry<String, HttpResponse<Buffer>>> headLeg = Uni.createFrom()
-                .deferred(() -> sendRequest(target, "HEAD", state, remainingHopMs(hopStartNanos, timeoutMs)))
-                .onFailure(RedirectResolver::isStaleConnection).retry().atMost(1)
-                .<Map.Entry<String, HttpResponse<Buffer>>>map(response -> new SimpleEntry<>("HEAD", response))
+        Uni<MethodResponse> headLeg = withStaleConnectionRetry(Uni.createFrom()
+                        .deferred(() -> sendRequest(target, "HEAD", state, remainingHopMs(hopStartNanos, timeoutMs))))
+                .<MethodResponse>map(response -> new MethodResponse("HEAD", response))
                 // A HEAD that fails outright (dl.flipkart.com's /s/ links: connection opens,
                 // HEAD is never answered) gets its GET immediately rather than waiting out the
                 // hedge delay below. A DNS failure is fatal for the GET too, so it propagates
                 // as-is instead of paying for a doomed request.
                 .onFailure().recoverWithUni(t -> isDnsFailure(t)
                         ? Uni.createFrom().failure(t)
-                        : getOnce.<Map.Entry<String, HttpResponse<Buffer>>>map(response -> new SimpleEntry<>("GET", response)));
+                        : getOnce.<MethodResponse>map(response -> new MethodResponse("GET", response)));
 
         long hedgeDelayMs = Math.min(ResolverLimits.HEDGE_DELAY_MS, timeoutMs / 2);
-        Uni<Map.Entry<String, HttpResponse<Buffer>>> hedgeLeg = Uni.createFrom()
+        Uni<MethodResponse> hedgeLeg = Uni.createFrom()
                 .<Void>emitter(emitter -> {
                     long timerId = vertx.setTimer(hedgeDelayMs, id -> emitter.complete(null));
                     emitter.onTermination(() -> vertx.cancelTimer(timerId));
                 })
                 .flatMap(ignored -> getOnce)
-                .<Map.Entry<String, HttpResponse<Buffer>>>map(response -> new SimpleEntry<>("GET", response));
+                .<MethodResponse>map(response -> new MethodResponse("GET", response));
 
         return Uni.combine().any().of(headLeg, hedgeLeg)
-                .flatMap(entry -> {
-                    if (!"HEAD".equals(entry.getKey())) {
-                        return Uni.createFrom().item(entry);
+                .flatMap(methodResponse -> {
+                    if (!"HEAD".equals(methodResponse.method())) {
+                        return Uni.createFrom().item(methodResponse);
                     }
-                    HttpResponse<Buffer> headResponse = entry.getValue();
+                    HttpResponse<Buffer> headResponse = methodResponse.response();
                     boolean fallbackStatus = GET_FALLBACK_STATUSES.contains(headResponse.statusCode());
                     // HEAD never carries a body per the HTTP spec, so a terminal-looking 200 HTML
                     // response needs an actual GET before we can scan it for meta-refresh/JS intent.
                     boolean needsBodyForHtmlScan = headResponse.statusCode() == 200 && isHtml(headResponse.getHeader("Content-Type"));
                     if (!fallbackStatus && !needsBodyForHtmlScan) {
-                        return Uni.createFrom().item(entry);
+                        return Uni.createFrom().item(methodResponse);
                     }
                     LOG.debugf("HEAD %s -> %d, falling back to GET (fallbackStatus=%s, htmlScan=%s)",
                             target, headResponse.statusCode(), fallbackStatus, needsBodyForHtmlScan);
-                    return getOnce.<Map.Entry<String, HttpResponse<Buffer>>>map(getResponse -> new SimpleEntry<>("GET", getResponse));
+                    return getOnce.<MethodResponse>map(getResponse -> new MethodResponse("GET", getResponse));
                 })
-                .map(entry -> interpretSafely(target, entry.getKey(), entry.getValue(), via, state, hopStartNanos))
+                .map(methodResponse -> interpretSafely(target, methodResponse.method(), methodResponse.response(), via, state, hopStartNanos))
                 .onFailure().invoke(t -> LOG.debugf(t, "hop failed for %s", target))
                 .onFailure().recoverWithItem(t -> errorComputation(target, via, hopStartNanos, t, lastMethodAttempted.get()));
     }
@@ -262,13 +273,18 @@ public class RedirectResolver {
             return interpret(target, method, response, via, state, hopStartNanos);
         } catch (RuntimeException e) {
             LOG.errorf(e, "internal error interpreting %s response for %s", method, target);
-            long elapsedMs = elapsedMs(hopStartNanos);
-            Hop hop = new Hop(target.toString(), method, response.statusCode(), null, via, null,
-                    response.getHeader("Content-Type"), elapsedMs);
+            Hop hop = hopOf(target, method, response.statusCode(), null, via, response.getHeader("Content-Type"),
+                    elapsedMs(hopStartNanos));
             return new HopComputation(hop,
                     new HopOutcome.Terminal(new Destination.Unresolved(StopReason.INTERNAL_ERROR), StopReason.INTERNAL_ERROR),
                     false);
         }
+    }
+
+    /** Every {@code Hop} recorded for a response actually received shares these fields. */
+    private static Hop hopOf(URI target, String method, int status, String location, HopVia via, String contentType,
+            long elapsedMs) {
+        return new Hop(target.toString(), method, status, location, via, null, contentType, elapsedMs);
     }
 
     private HopComputation interpret(URI target, String method, HttpResponse<Buffer> response, HopVia via,
@@ -288,7 +304,7 @@ public class RedirectResolver {
 
         if (REDIRECT_STATUSES.contains(status)) {
             String location = response.getHeader("Location");
-            Hop hop = new Hop(target.toString(), method, status, location, via, null, contentType, elapsedMs);
+            Hop hop = hopOf(target, method, status, location, via, contentType, elapsedMs);
             if (location == null || location.isBlank()) {
                 return new HopComputation(hop,
                         new HopOutcome.Terminal(new Destination.Web(target), StopReason.TERMINAL_RESPONSE), cacheable);
@@ -300,11 +316,11 @@ public class RedirectResolver {
             String body = capBody(response.body());
             Optional<String> metaRefresh = MetaRefreshScanner.findRefreshUrl(body);
             if (metaRefresh.isPresent()) {
-                Hop hop = new Hop(target.toString(), method, status, metaRefresh.get(), via, null, contentType, elapsedMs);
-                URI next = resolveLocation(target, metaRefresh.get());
-                if (next != null && UrlNormalizer.isHttp(next)) {
+                Hop hop = hopOf(target, method, status, metaRefresh.get(), via, contentType, elapsedMs);
+                Optional<URI> next = resolveLocation(target, metaRefresh.get());
+                if (next.isPresent() && UrlNormalizer.isHttp(next.get())) {
                     return new HopComputation(hop,
-                            new HopOutcome.Redirect(UrlNormalizer.normalizeHttp(next), HopVia.META_REFRESH), cacheable);
+                            new HopOutcome.Redirect(UrlNormalizer.normalizeHttp(next.get()), HopVia.META_REFRESH), cacheable);
                 }
                 return new HopComputation(hop,
                         new HopOutcome.Terminal(new Destination.Web(target), StopReason.TERMINAL_RESPONSE), cacheable);
@@ -312,22 +328,23 @@ public class RedirectResolver {
             Optional<String> jsRedirect = JsRedirectDetector.detect(body);
             if (jsRedirect.isPresent()) {
                 LOG.infof("js_suspected at %s (extracted=%s)", target, jsRedirect.get());
-                Hop hop = new Hop(target.toString(), method, status, null, via, null, contentType, elapsedMs);
+                Hop hop = hopOf(target, method, status, null, via, contentType, elapsedMs);
                 return new HopComputation(hop,
                         new HopOutcome.Terminal(new Destination.Web(target), StopReason.JS_SUSPECTED), cacheable);
             }
         }
 
-        Hop hop = new Hop(target.toString(), method, status, null, via, null, contentType, elapsedMs);
+        Hop hop = hopOf(target, method, status, null, via, contentType, elapsedMs);
         return new HopComputation(hop, new HopOutcome.Terminal(new Destination.Web(target), StopReason.TERMINAL_RESPONSE), cacheable);
     }
 
     /** Non-HTTP redirect targets (intent://, market://) are a terminal success, not an error. */
     private HopOutcome resolveRedirectTarget(URI from, String location) {
-        URI resolved = resolveLocation(from, location);
-        if (resolved == null) {
+        Optional<URI> maybeResolved = resolveLocation(from, location);
+        if (maybeResolved.isEmpty()) {
             return new HopOutcome.Terminal(new Destination.Web(from), StopReason.TERMINAL_RESPONSE);
         }
+        URI resolved = maybeResolved.get();
         String scheme = resolved.getScheme();
         if (IntentUrlParser.isIntent(scheme)) {
             Optional<URI> fallback = IntentUrlParser.extractFallback(resolved.toString());
@@ -353,27 +370,24 @@ public class RedirectResolver {
     }
 
     /** Resolves a Location/meta-refresh value against the current URL: relative paths, missing schemes, unencoded chars. */
-    private URI resolveLocation(URI base, String location) {
+    private Optional<URI> resolveLocation(URI base, String location) {
         String trimmed = location.trim();
-        URI parsed = tryParse(trimmed);
-        if (parsed == null) {
-            parsed = tryParse(trimmed.replace(" ", "%20"));
-        }
-        if (parsed == null) {
-            return null;
+        Optional<URI> parsed = tryParse(trimmed).or(() -> tryParse(trimmed.replace(" ", "%20")));
+        if (parsed.isEmpty()) {
+            return Optional.empty();
         }
         try {
-            return base.resolve(parsed);
+            return Optional.of(base.resolve(parsed.get()));
         } catch (IllegalArgumentException e) {
-            return null;
+            return Optional.empty();
         }
     }
 
-    private URI tryParse(String value) {
+    private Optional<URI> tryParse(String value) {
         try {
-            return new URI(value);
+            return Optional.of(new URI(value));
         } catch (URISyntaxException e) {
-            return null;
+            return Optional.empty();
         }
     }
 
@@ -390,24 +404,23 @@ public class RedirectResolver {
     }
 
     private static boolean isDnsFailure(Throwable t) {
-        for (Throwable cause = t; cause != null; cause = cause.getCause()) {
-            if (cause instanceof UnknownHostException) {
-                return true;
-            }
-        }
-        return false;
+        return hasCause(t, UnknownHostException.class);
     }
 
     private static boolean isStaleConnection(Throwable t) {
+        return hasCause(t, HttpClosedException.class);
+    }
+
+    private static boolean hasCause(Throwable t, Class<? extends Throwable> type) {
         for (Throwable cause = t; cause != null; cause = cause.getCause()) {
-            if (cause instanceof HttpClosedException) {
+            if (type.isInstance(cause)) {
                 return true;
             }
         }
         return false;
     }
 
-    private Result buildResult(URI normalizedInput, WalkState state, WalkOutcome outcome, long startNanos) {
+    private Result buildResult(URI normalizedInput, WalkState state, HopOutcome.Terminal outcome, long startNanos) {
         // The final hop recorded is always the terminal one (success or error) — "any hop
         // completed" means there's at least one *earlier* hop besides that terminal attempt.
         boolean anyHopCompleted = state.hopCount() > 1;
@@ -419,7 +432,7 @@ public class RedirectResolver {
         long totalElapsedMs = elapsedMs(startNanos);
         LOG.debugf("resolve done: input=%s finalUrl=%s status=%s reason=%s hops=%d elapsedMs=%d resumable=%s",
                 normalizedInput, finalUrl, status, outcome.reason(), state.hopCount(), totalElapsedMs, resumable);
-        return new Result(state.rawInput(), finalUrl, outcome.destination(), status, outcome.reason(),
+        return new Result(normalizedInput.toString(), finalUrl, outcome.destination(), status, outcome.reason(),
                 state.hops(), totalElapsedMs, state.remainingMs(), false, resumable);
     }
 

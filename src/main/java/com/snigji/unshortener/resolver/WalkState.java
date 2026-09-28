@@ -21,21 +21,15 @@ import java.util.Set;
  */
 public final class WalkState {
 
-    private final String rawInput;
     private final UaProfile profile;
     private final Instant deadline;
     private final CookieJar cookieJar = new CookieJar();
     private final List<Hop> hops = new ArrayList<>();
     private final Set<URI> visited = new HashSet<>();
 
-    public WalkState(String rawInput, UaProfile profile) {
-        this.rawInput = Objects.requireNonNull(rawInput, "rawInput");
+    public WalkState(UaProfile profile) {
         this.profile = Objects.requireNonNull(profile, "profile");
         this.deadline = Instant.now().plus(ResolverLimits.RESOLVER_BUDGET);
-    }
-
-    public String rawInput() {
-        return rawInput;
     }
 
     public UaProfile profile() {

@@ -3,6 +3,7 @@ package com.snigji.unshortener.rest;
 import com.snigji.unshortener.resolver.ResolverLimits;
 import com.snigji.unshortener.service.ResolverService;
 import com.snigji.unshortener.service.UnshortenMapper;
+import com.snigji.unshortener.service.UnshortenResponse;
 import io.smallrye.mutiny.Uni;
 import jakarta.inject.Inject;
 import jakarta.validation.constraints.NotNull;
@@ -17,7 +18,6 @@ import jakarta.ws.rs.core.UriInfo;
 import org.jboss.resteasy.reactive.server.ServerExceptionMapper;
 
 import java.net.URI;
-import java.util.Optional;
 
 /**
  * unshorten.me-compatible endpoint. Path is byte-identical to theirs on purpose —
@@ -41,7 +41,7 @@ public class UnshortenResource {
     @GET
     @Produces(MediaType.APPLICATION_JSON)
     public Uni<Response> unshorten(@QueryParam("url") @NotNull URI url) {
-        return resolverService.resolve(url, Optional.of("android"))
+        return resolverService.resolve(url, "android")
                 .ifNoItem().after(ResolverLimits.API_CEILING)
                 .recoverWithItem(() -> resolverService.hardCutoffFallback(url))
                 .map(result -> Response.ok(mapper.toCompat(result, url.toString())).build());

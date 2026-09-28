@@ -281,50 +281,104 @@ committed yet.
 From `code-simplifier`. No behavior change intended for any of these except
 where noted.
 
+**Status: fixed**, all except the two explicitly-optional/your-call items
+noted below (left alone on purpose). `./gradlew test` (all 65 tests, no new
+or changed assertions needed for these) and `./gradlew build` both still
+pass — consistent with "no behavior change intended."
+
 - **Cache key format duplicated and APIs mismatched.** ⚡ *converged
   (code-review #6)* `EdgeCache.key` builds `profile + "|" + url`
   (`EdgeCache.java:39-41`); `ResolverService` builds the same string inline
   (`ResolverService.java:42`) for `WholeWalkCache`. Give both caches the same
   `(URI, profile)` signature and keep key-building inside the cache classes.
+  **Fixed:** `WholeWalkCache.get`/`put` now take `(URI, profile)`, building the
+  key internally, same shape as `EdgeCache`. `ResolverService` no longer
+  builds a cache key itself.
 - **`RESPONSE_RESERVE` is unused except in a javadoc link.** ⚡ *converged
   (code-review #4)* Define `RESOLVER_BUDGET = API_CEILING.minus(RESPONSE_RESERVE)`
   so the relationship is enforced in code, not just stated.
+  **Fixed** exactly as suggested. Tier 3's static class-load assertion
+  checking this same relationship is now tautological but left in place —
+  cheap insurance against a future edit reverting `RESOLVER_BUDGET` back to
+  an independent literal.
 - **`GET_FALLBACK_STATUSES` is an ad-hoc, incident-driven list with no
   rationale.** ⚡ *converged (comment-analyzer, code-review #5)* `{404, 405,
   501, 400, 403}` grew one host-quirk at a time; consider a general rule
   ("any non-2xx/3xx HEAD status triggers a confirmatory GET") instead.
+  **Fixed the "no rationale" complaint only, deliberately not the behavior.**
+  A general rule changes real network behavior (many more statuses would now
+  trigger a confirmatory GET) with no test coverage backing that specific
+  change, and the review itself only "considers" it, doesn't require it —
+  out of scope for a tier whose own premise is no behavior change. Added a
+  comment explaining what's known about each status instead, and reordered
+  the set numerically (also folds in the "written out of numeric order" tidy-up
+  below).
 - `WalkState.rawInput` is redundant/misnamed — it's already normalized;
   `buildResult` should just use `normalizedInput`.
+  **Fixed:** removed the field entirely (confirmed via grep it had no other
+  reader); `WalkState`'s constructor is now just `WalkState(UaProfile)`.
 - `WalkOutcome` duplicates `HopOutcome.Terminal` exactly — can be deleted.
+  **Fixed:** deleted. `step()` now returns `Uni<HopOutcome.Terminal>` directly
+  — the terminal branch of its `switch` no longer even needs to reconstruct
+  a value, since `t` already *is* the right shape.
 - `step()` repeats the same early-stop construction 3×; `interpret()` repeats
   the same `Hop`-building pattern 4×; `fetchHop`'s `SimpleEntry` tagging
   repeated 4× (→ a `MethodResponse` record); `isDnsFailure`/`isStaleConnection`
   are the same cause-chain walk (→ one `hasCause(Throwable, Class)` helper);
   the stale-connection retry is written twice.
+  **Fixed, all five:** a private `stop(URI, StopReason)` helper for `step()`;
+  a private static `hopOf(...)` helper for `interpret()`/`interpretSafely()`
+  (5 call sites, not just the 4 originally in `interpret()` alone —
+  `interpretSafely`'s own catch-branch Hop shared the same shape);
+  `fetchHop`'s tagging now uses a nested `MethodResponse(String method,
+  HttpResponse<Buffer> response)` record instead of `AbstractMap.SimpleEntry`;
+  `hasCause(Throwable, Class<? extends Throwable>)` backs both
+  `isDnsFailure`/`isStaleConnection`, kept as named wrappers rather than
+  inlined at call sites, for readability; `withStaleConnectionRetry(Uni)`
+  backs both `getOnce` and `headLeg`.
 - `EdgeCache`/`WholeWalkCache` are structurally identical (optional: extract a
-  `TieredCache<V>`).
+  `TieredCache<V>`). **Left alone, on purpose** — explicitly marked optional,
+  and a generic wrapper for two four-line classes is the kind of abstraction
+  not worth its own indirection.
 - Hard-cutoff `.ifNoItem().after(...)` duplicated in both REST resources —
   flagged as "your call" since CLAUDE.md calls this timeout "resource-level"
   deliberately; may be intentional given the same wording.
+  **Left alone, on purpose** — per the review's own hedge and CLAUDE.md's
+  wording.
 - `UrlNormalizer` re-implements `isHttp` inline instead of reusing the
-  existing method.
+  existing method. **Fixed:** `normalizeInput` now calls `isHttp(uri)`.
 - `withVia` copies all eight `Hop` fields by hand — belongs on the record
-  itself, next to `Result.withCached`.
+  itself, next to `Result.withCached`. **Fixed:** added `Hop.withVia(HopVia)`;
+  `RedirectResolver.withVia` now just calls it.
 - Package direction is inverted: `service.UnshortenMapper` imports
   `rest.UnshortenResponse` — the service layer depends on the REST layer.
+  **Fixed:** moved `UnshortenResponse` from `rest` to `service` (`git mv`,
+  preserving history) — it's the compat wire-shape the service layer
+  produces, REST only serializes it. `UnshortenResource`'s exception mapper
+  (the one other place that constructs one) now imports it from `service`.
 - `CookieJar` cleanups: magic number `7` instead of `"Domain=".length()`;
   double `Optional.of` in a ternary; hand-built `StringBuilder` join instead
   of `Collectors.joining("; ")`; a dead null-check on a list that's never
   actually null.
+  **Fixed**, except the "double `Optional.of`" one — already resolved as a
+  side effect of the Tier 1 `Domain=;` fix, which restructured that ternary
+  into an if/isEmpty check. The dead null-check: confirmed via the one real
+  caller (`response.headers().getAll("Set-Cookie")`, which Vert.x never
+  returns `null` from) that it's genuinely unreachable, not just apparently so.
 - Minor tidy-ups: `Optional<String>` used as a method parameter in two
   places; `GET_FALLBACK_STATUSES` written out of numeric order;
   `WebClientProducer`'s magic numbers (2000ms connect timeout, pool size 64)
   could live in `ResolverLimits`; a couple of methods return `null` where
   `Optional` would match the rest of the codebase's style.
-
-**Its top picks if triaging narrowly:** the `rawInput`, `WalkOutcome`,
-`SimpleEntry`→record, cause-chain-walker, and cache-key items — cut the most
-noise with no behavior change.
+  **Fixed, all four:** `ResolverService.resolve`/`UaProfileRegistry.resolve`
+  now take a plain nullable `String` instead of `Optional<String>` — both
+  call sites (`ResolveResource`, `UnshortenResource`) simplify too, no longer
+  needing to manufacture an `Optional` just to make the call; blank-or-null
+  still falls back to the default profile, same as before.
+  `GET_FALLBACK_STATUSES` reordered (see above). `ResolverLimits` gained
+  `CONNECT_TIMEOUT_MS`/`MAX_POOL_SIZE`, referenced from `WebClientProducer`.
+  `resolveLocation`/`tryParse` (private, two internal call sites) now return
+  `Optional<URI>` instead of a nullable one.
 
 ---
 

@@ -37,19 +37,18 @@ public class ResolverService {
     @Inject
     UaProfileRegistry uaProfiles;
 
-    public Uni<Result> resolve(URI url, Optional<String> profileName) {
+    public Uni<Result> resolve(URI url, String profileName) {
         UaProfile profile = uaProfiles.resolve(profileName);
-        String cacheKey = profile.name() + "|" + url;
 
-        Optional<Result> cached = wholeWalkCache.get(cacheKey);
+        Optional<Result> cached = wholeWalkCache.get(url, profile.name());
         if (cached.isPresent()) {
-            LOG.debugf("whole-walk cache hit for %s", cacheKey);
+            LOG.debugf("whole-walk cache hit for %s|%s", profile.name(), url);
             return Uni.createFrom().item(cached.get().withCached(true));
         }
 
-        LOG.debugf("whole-walk cache miss for %s, resolving", cacheKey);
+        LOG.debugf("whole-walk cache miss for %s|%s, resolving", profile.name(), url);
         return redirectResolver.resolve(url, profile)
-                .invoke(result -> wholeWalkCache.put(cacheKey, result))
+                .invoke(result -> wholeWalkCache.put(url, profile.name(), result))
                 .onFailure().invoke(t -> LOG.errorf(t,
                         "resolve() failed unexpectedly for %s despite RedirectResolver's own safety net", url))
                 .onFailure().recoverWithItem(t -> internalErrorResult(url));

@@ -14,7 +14,6 @@ import java.net.URI;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -35,7 +34,7 @@ class ResolverServiceTest {
         service.wholeWalkCache = new WholeWalkCache();
         service.uaProfiles = new UaProfileRegistry() {
             @Override
-            public UaProfile resolve(Optional<String> requestedName) {
+            public UaProfile resolve(String requestedName) {
                 return PROFILE;
             }
         };
@@ -46,7 +45,7 @@ class ResolverServiceTest {
             }
         };
 
-        Result result = service.resolve(URI.create("https://example.com/x"), Optional.empty())
+        Result result = service.resolve(URI.create("https://example.com/x"), null)
                 .await().atMost(Duration.ofSeconds(5));
 
         assertEquals(Status.FAILED, result.status());

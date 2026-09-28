@@ -1,4 +1,4 @@
-package com.snigji.unshortener.rest;
+package com.snigji.unshortener.service;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 

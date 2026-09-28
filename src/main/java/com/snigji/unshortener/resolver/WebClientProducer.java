@@ -17,8 +17,8 @@ public class WebClientProducer {
                 .setFollowRedirects(false)
                 // UA is set per-request from the resolved UaProfile, not client-wide.
                 .setUserAgentEnabled(false)
-                .setConnectTimeout(2000)
-                .setMaxPoolSize(64);
+                .setConnectTimeout(ResolverLimits.CONNECT_TIMEOUT_MS)
+                .setMaxPoolSize(ResolverLimits.MAX_POOL_SIZE);
         return WebClient.create(vertx, options);
     }
 }
