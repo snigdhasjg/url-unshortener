@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-`unshortener` is a self-hosted URL-unshortener API (Quarkus, Java 25, group `com.snigji`). Given a shortened URL it walks the redirect chain and reports the final destination plus the hops taken, under a hard 5-second response ceiling. Full design intent, rationale, and constraints live in `plan.md` at the repo root — read it before making non-trivial changes to the resolver, caching, or API contract; this file only covers what a contributor needs to start working.
+`unshortener` is a self-hosted URL-unshortener API (Quarkus, Java 25, group `com.snigji`). Given a shortened URL it walks the redirect chain and reports the final destination plus the hops taken, under a hard 5-second response ceiling. Full design intent, rationale, and constraints live in `docs/plan.md` — read it before making non-trivial changes to the resolver, caching, or API contract; this file only covers what a contributor needs to start working.
 
 ## Commands
 
