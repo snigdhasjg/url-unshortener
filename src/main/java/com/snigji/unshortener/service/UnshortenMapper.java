@@ -6,6 +6,8 @@ import com.snigji.unshortener.domain.Status;
 import com.snigji.unshortener.rest.UnshortenResponse;
 import jakarta.enterprise.context.ApplicationScoped;
 
+import java.net.URI;
+
 /**
  * Projects the rich {@link Result} onto the unshorten.me-compatible shape.
  * {@code success} maps to {@code status != failed}, no other condition — a partial
@@ -30,9 +32,9 @@ public class UnshortenMapper {
      */
     private String deepLinkAwareUrl(Result result) {
         return switch (result.destination()) {
-            case Destination.AppIntent appIntent -> appIntent.fallback() != null
-                    ? appIntent.fallback().toString()
-                    : appIntent.raw().toString();
+            case Destination.AppIntent appIntent -> appIntent.fallback()
+                    .map(URI::toString)
+                    .orElseGet(() -> appIntent.raw().toString());
             case Destination.Store store -> "https://play.google.com/store/apps/details?id=" + store.packageId();
             case Destination.Web ignored -> result.finalUrl();
             case Destination.Unresolved ignored -> result.finalUrl();

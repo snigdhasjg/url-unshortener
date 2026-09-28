@@ -36,4 +36,15 @@ public enum Status {
             case DEADLINE, MAX_HOPS, LOOP, JS_SUSPECTED -> PARTIAL;
         };
     }
+
+    /**
+     * True if {@code status} is one {@code from(reason, ...)} could actually produce, for
+     * either value of {@code anyHopCompleted}. Used by {@link Result}'s compact constructor
+     * to reject an impossible pairing (e.g. {@code RESOLVED} with {@code StopReason.DEADLINE})
+     * at construction time — this is the one place that decides the pairing, so nothing else
+     * duplicates that decision.
+     */
+    static boolean isConsistent(Status status, StopReason reason) {
+        return status == from(reason, false) || status == from(reason, true);
+    }
 }

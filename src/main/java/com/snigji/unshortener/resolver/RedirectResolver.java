@@ -239,7 +239,7 @@ public class RedirectResolver {
             request.putHeader(header.getKey(), header.getValue());
         }
         if (target.getHost() != null) {
-            state.cookieJar().cookieHeaderFor(target.getHost()).ifPresent(c -> request.putHeader("Cookie", c));
+            state.cookieHeaderFor(target.getHost()).ifPresent(c -> request.putHeader("Cookie", c));
         }
         if ("GET".equals(method)) {
             request.putHeader("Range", "bytes=0-" + (ResolverLimits.MAX_BODY_BYTES - 1));
@@ -280,7 +280,7 @@ public class RedirectResolver {
         List<String> setCookies = response.headers().getAll("Set-Cookie");
         if (!setCookies.isEmpty() && target.getHost() != null) {
             LOG.debugf("storing %d cookie(s) for %s", setCookies.size(), target.getHost());
-            state.cookieJar().store(target.getHost(), setCookies);
+            state.storeCookies(target.getHost(), setCookies);
         }
         // Cookie-bearing hops are not edge-cacheable: replaying from cache would silently
         // skip the Set-Cookie a later hop might depend on.
@@ -330,12 +330,20 @@ public class RedirectResolver {
         }
         String scheme = resolved.getScheme();
         if (IntentUrlParser.isIntent(scheme)) {
-            URI fallback = IntentUrlParser.extractFallback(resolved.toString()).orElse(null);
+            Optional<URI> fallback = IntentUrlParser.extractFallback(resolved.toString());
             return new HopOutcome.Terminal(new Destination.AppIntent(resolved, fallback), StopReason.NON_HTTP_SCHEME);
         }
         if (IntentUrlParser.isMarket(scheme)) {
             String packageId = IntentUrlParser.extractPackageId(resolved.toString())
                     .orElse(resolved.getSchemeSpecificPart());
+            // A bare "market://" (or one whose id= value the parser fails to extract, then
+            // whose scheme-specific part is itself blank) has no usable package id — that's
+            // a degenerate response from the target, not a bug in our own parsing, so it's
+            // Unresolved rather than a Destination.Store construction Store's own invariant
+            // would otherwise reject.
+            if (packageId == null || packageId.isBlank()) {
+                return new HopOutcome.Terminal(new Destination.Unresolved(StopReason.NON_HTTP_SCHEME), StopReason.NON_HTTP_SCHEME);
+            }
             return new HopOutcome.Terminal(new Destination.Store(packageId), StopReason.NON_HTTP_SCHEME);
         }
         if (!UrlNormalizer.isHttp(resolved)) {

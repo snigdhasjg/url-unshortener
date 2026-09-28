@@ -200,33 +200,79 @@ From `type-design-analyzer`. None are urgent — today's call sites are all
 careful — but each converts "true because nobody's broken it yet" into "true
 by construction" for a small cost.
 
+**Status: fixed**, all eight. See the working tree for the diff; not
+committed yet.
+
 1. **`Result`'s `status`/`stopReason` pairing is unenforced.** Nothing stops
    `new Result(..., Status.RESOLVED, StopReason.DEADLINE, ...)` from
    compiling, even though CLAUDE.md calls `Status.from` "the one place that
    decides" this. → compact constructor asserting `status ==
    Status.from(stopReason, ...)`.
+   **Fixed**, adapted slightly: `Result` has no `anyHopCompleted` field to
+   pass to `Status.from` directly, so added `Status.isConsistent(status,
+   reason)` — true if `status` is what `from(reason, ...)` could produce for
+   *either* value of `anyHopCompleted` — and call it from `Result`'s compact
+   constructor. Weaker than pinning the exact boolean, but it still rejects
+   the review's own example (`RESOLVED` + `DEADLINE`: `from(DEADLINE, *)` is
+   always `PARTIAL`) without requiring every `Result`-constructing call site
+   (there are four, two of them added by the Tier 2 fix) to agree on one
+   formula for "did an earlier hop complete."
 2. **`Destination.AppIntent.fallback` is a nullable `URI`**, inconsistent with
    `Optional<String>` used elsewhere (e.g. `UaProfilesConfig.Profile`).
+   **Fixed:** changed to `Optional<URI>`, updated both call sites
+   (`RedirectResolver.resolveRedirectTarget`, `UnshortenMapper.deepLinkAwareUrl`).
+   Verified serialization through the real Quarkus/Jackson stack, not just
+   in-process — added `resolveSerializesAppIntentFallbackAsAPlainStringOverTheWire`
+   to `ApiEndpointsTest`, confirming it comes back as a plain string over
+   `/api/v1/resolve`, not `Optional`'s internal shape.
 3. **`Destination.Store.packageId` has zero validation** — and
    `RedirectResolver.java:274-275` can hand it a raw URI scheme-specific part
    with no shape check.
+   **Fixed:** `Store`'s compact constructor now rejects a blank `packageId`.
+   `resolveRedirectTarget` checks for that case explicitly *before*
+   constructing one (a bare `market://` with no extractable id is a
+   degenerate response from the target, not a bug in our own parsing) and
+   falls back to `Destination.Unresolved` — not a try/catch around the
+   constructor, since this is an expected input shape, not an exceptional one.
 4. **`UaProfile`'s immutability guarantee is bypassable** — the canonical
    constructor is public/unguarded, and `RedirectResolverTest.java:44` already
    constructs it directly, proving the "always via `from()`" convention isn't
    load-bearing today only by luck.
+   **Fixed:** added a compact constructor doing `headers = List.copyOf(headers)`,
+   so the defensive copy `from()` used to do alone now holds regardless of
+   entry point. `from()` no longer needs its own `List.copyOf` call.
 5. **`ResolverLimits`'s numeric relationships are comment-only**
    (`4800+200=5000`, `floor<cap`) — a `static {}` block with asserts would
    make this fail at class-load time instead of silently.
+   **Fixed** exactly as suggested, with explicit `if`/`throw` rather than the
+   `assert` keyword (which is a no-op unless the JVM runs with `-ea`, and this
+   needs to hold in production). Tier 4 separately flags `RESPONSE_RESERVE` as
+   otherwise-unused and suggests defining `RESOLVER_BUDGET` as
+   `API_CEILING.minus(RESPONSE_RESERVE)`; left untouched here since that's a
+   Tier 4 item, but doing it would make this particular check trivially true
+   by construction rather than a runtime assertion.
 6. **`WalkState.cookieJar()` leaks the live mutable `CookieJar`** instead of
    exposing just the two operations `RedirectResolver` actually needs.
+   **Fixed:** removed the `cookieJar()` accessor; `WalkState` now exposes
+   `cookieHeaderFor(host)` and `storeCookies(host, headers)` directly,
+   delegating internally. `RedirectResolver`'s two call sites updated.
 7. **`UaProfileRegistry.resolve` does exact-case lookup** — `"Android"` 400s
    even if `"android"` is configured, undocumented as intentional. Also: no
    validation that `userAgent()` is non-blank, despite Hibernate Validator
    already being a project dependency.
+   **Fixed:** lookup is now case-insensitive (profile names are config keys a
+   client passes in a query param, not case-sensitive identifiers), returning
+   the canonical stored key so cache keys built from `profile().name()` don't
+   fragment across request casing. Added `@NotBlank` to
+   `UaProfilesConfig.Profile.userAgent()` — Quarkus validates `@ConfigMapping`
+   interfaces against Bean Validation constraints at startup, confirmed by
+   `./gradlew build` still passing (today's `application.yml` values satisfy it).
 8. Minor: `WalkState`'s constructor doesn't null-check `rawInput`/`profile`
    (NPE downstream instead of fail-fast); `CookieJar`'s silent-skip of
    malformed `Set-Cookie` headers isn't labeled as intentional at the point it
    happens.
+   **Fixed:** both, via `Objects.requireNonNull` in `WalkState`'s constructor
+   and a one-line comment at the `CookieJar` skip site.
 
 ---
 

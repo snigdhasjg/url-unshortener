@@ -24,6 +24,8 @@ public final class CookieJar {
         for (String header : setCookieHeaders) {
             String[] nameValue = header.split(";", 2)[0].split("=", 2);
             if (nameValue.length != 2) {
+                // A Set-Cookie without a "name=value" first segment is malformed — skip it,
+                // intentionally, rather than treat one bad cookie as a hard failure.
                 continue;
             }
             String domain = extractDomain(header).orElse(responseHost).toLowerCase(Locale.ROOT);

@@ -2,6 +2,7 @@ package com.snigji.unshortener.ua;
 
 import io.smallrye.config.ConfigMapping;
 import io.smallrye.config.WithParentName;
+import jakarta.validation.constraints.NotBlank;
 
 import java.util.Map;
 import java.util.Optional;
@@ -18,6 +19,7 @@ public interface UaProfilesConfig {
     Map<String, Profile> profiles();
 
     interface Profile {
+        @NotBlank
         String userAgent();
 
         Optional<String> secChUa();

@@ -9,6 +9,8 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -27,8 +29,8 @@ public final class WalkState {
     private final Set<URI> visited = new HashSet<>();
 
     public WalkState(String rawInput, UaProfile profile) {
-        this.rawInput = rawInput;
-        this.profile = profile;
+        this.rawInput = Objects.requireNonNull(rawInput, "rawInput");
+        this.profile = Objects.requireNonNull(profile, "profile");
         this.deadline = Instant.now().plus(ResolverLimits.RESOLVER_BUDGET);
     }
 
@@ -40,8 +42,14 @@ public final class WalkState {
         return profile;
     }
 
-    public CookieJar cookieJar() {
-        return cookieJar;
+    /** Cookie(s), if any, to send when next requesting {@code host}. See {@link CookieJar}. */
+    public Optional<String> cookieHeaderFor(String host) {
+        return cookieJar.cookieHeaderFor(host);
+    }
+
+    /** Records any {@code Set-Cookie} headers a response from {@code host} carried. */
+    public void storeCookies(String host, List<String> setCookieHeaders) {
+        cookieJar.store(host, setCookieHeaders);
     }
 
     public long remainingMs() {

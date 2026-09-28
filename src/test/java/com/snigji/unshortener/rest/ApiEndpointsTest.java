@@ -33,6 +33,10 @@ class ApiEndpointsTest {
                 req.response().setStatusCode(302).putHeader("Location", "/final").end();
             } else if ("/final".equals(req.path())) {
                 req.response().setStatusCode(200).putHeader("Content-Type", "text/html").end("<html>done</html>");
+            } else if ("/intent-redirect".equals(req.path())) {
+                req.response().setStatusCode(302).putHeader("Location",
+                        "intent://scan/#Intent;scheme=https;package=com.example;"
+                                + "S.browser_fallback_url=https%3A%2F%2Fexample.com%2Ffallback;end").end();
             } else {
                 req.response().setStatusCode(404).end();
             }
@@ -183,6 +187,29 @@ class ApiEndpointsTest {
                 .when().get("/api/v1/resolve")
                 .then().statusCode(400)
                 .body("error", equalTo("unknown profile: bogus"));
+    }
+
+    @Test
+    void resolveSerializesAppIntentFallbackAsAPlainStringOverTheWire() {
+        // Destination.AppIntent.fallback is Optional<URI> (Tier 3 #2) — verifies that,
+        // serialized through the real Quarkus/Jackson stack (not just in-process), it comes
+        // back as a plain string, not an Optional's internal shape like {"present":true}.
+        RestAssured.given()
+                .queryParam("url", targetUrl("/intent-redirect"))
+                .when().get("/api/v1/resolve")
+                .then().statusCode(200)
+                .body("status", equalTo("resolved"))
+                .body("destination.fallback", equalTo("https://example.com/fallback"));
+    }
+
+    @Test
+    void unshortenMapsAppIntentFallbackToUnshortenedUrl() {
+        RestAssured.given()
+                .queryParam("url", targetUrl("/intent-redirect"))
+                .when().get("/api/v2/unshorten")
+                .then().statusCode(200)
+                .body("success", equalTo(true))
+                .body("unshortened_url", equalTo("https://example.com/fallback"));
     }
 
     @Test

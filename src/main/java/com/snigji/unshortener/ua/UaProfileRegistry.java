@@ -18,10 +18,14 @@ public class UaProfileRegistry {
 
     public UaProfile resolve(Optional<String> requestedName) {
         String name = requestedName.filter(s -> !s.isBlank()).orElse(defaultProfileName);
-        UaProfilesConfig.Profile profileConfig = config.profiles().get(name);
-        if (profileConfig == null) {
-            throw new BadRequestException("unknown profile: " + name);
-        }
-        return UaProfile.from(name, profileConfig);
+        // Profile names are config keys a client passes in a query param, not case-sensitive
+        // identifiers — "Android" and "android" are the same profile. Returns the canonical
+        // stored key (not the requested casing) so cache keys built from profile().name()
+        // don't fragment across request casing.
+        return config.profiles().entrySet().stream()
+                .filter(entry -> entry.getKey().equalsIgnoreCase(name))
+                .findFirst()
+                .map(entry -> UaProfile.from(entry.getKey(), entry.getValue()))
+                .orElseThrow(() -> new BadRequestException("unknown profile: " + name));
     }
 }

@@ -175,7 +175,7 @@ class RedirectResolverTest {
         assertEquals(Status.RESOLVED, result.status());
         assertEquals(StopReason.NON_HTTP_SCHEME, result.stopReason());
         Destination.AppIntent appIntent = assertInstanceOf(Destination.AppIntent.class, result.destination());
-        assertEquals("https://example.com/fallback", appIntent.fallback().toString());
+        assertEquals("https://example.com/fallback", appIntent.fallback().orElseThrow().toString());
     }
 
     @Test

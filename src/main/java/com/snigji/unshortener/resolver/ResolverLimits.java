@@ -28,6 +28,18 @@ public final class ResolverLimits {
 
     public static final long MAX_BODY_BYTES = 64 * 1024;
 
+    // Fails class-load, not just documentation, if these constants drift out of the
+    // relationship their own comments claim. Plain `assert` isn't used: that's a no-op
+    // unless the JVM runs with -ea, and this needs to hold in production too.
+    static {
+        if (!RESOLVER_BUDGET.plus(RESPONSE_RESERVE).equals(API_CEILING)) {
+            throw new ExceptionInInitializerError("RESOLVER_BUDGET + RESPONSE_RESERVE must equal API_CEILING");
+        }
+        if (FLOOR_MS >= PER_HOP_CAP_MS) {
+            throw new ExceptionInInitializerError("FLOOR_MS must be less than PER_HOP_CAP_MS");
+        }
+    }
+
     private ResolverLimits() {
     }
 }
