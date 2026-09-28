@@ -22,6 +22,9 @@ from different angles — treat those as higher confidence.
 
 ## Tier 1 — Correctness bugs (real behavior, not just style)
 
+**Status: fixed**, except #4 below (verified not reachable). See the working tree
+for the diff; not committed yet.
+
 1. **`EdgeCache` TTL never expires for a popular failing URL.** ⚡ *converged
    (code-review, code-simplifier)*
    `RedirectResolver.step()` (`RedirectResolver.java:88`) unconditionally
@@ -31,6 +34,8 @@ from different angles — treat those as higher confidence.
    is never retried, as long as it keeps getting hit. It also re-persists the
    walk-relative `via` field for whichever walk hit it last.
    → Skip the `put` when the computation came from a cache hit.
+   **Fixed:** `edgeCache.put` moved from `step()` into the cache-miss branch of
+   `computeHop`, so a hit never re-writes the entry (`RedirectResolver.java`).
 
 2. **Hedge/fallback GET can overshoot its real remaining budget.**
    (code-review) `remainingHopMs()` (`RedirectResolver.java:190`) floors the
@@ -39,6 +44,10 @@ from different angles — treat those as higher confidence.
    can overshoot to ~605ms, eating into the 200ms `RESPONSE_RESERVE` between
    `RESOLVER_BUDGET` and `API_CEILING` — risking the hard-cutoff path that
    `ResolverService.hardCutoffFallback` says should "never fire."
+   **Fixed:** `remainingHopMs` now floors at 1ms (the minimum Vert.x accepts as
+   a real timeout) instead of `FLOOR_MS` (400ms), and the HEAD leg's retry is
+   now also re-timed against the remaining budget instead of restarting with
+   the hop's full original timeout.
 
 3. **`CookieJar` mis-scopes a cookie with an explicit-but-empty `Domain=;`.**
    (code-review) `extractDomain()` (`CookieJar.java:38`) returns
@@ -46,6 +55,9 @@ from different angles — treat those as higher confidence.
    `store()`'s `.orElse(responseHost)` never fires and the cookie is filed
    under domain `""`. `cookieHeaderFor()` then can't match it against any real
    hostname; the cookie is silently never replayed.
+   **Fixed:** `extractDomain` now returns `Optional.empty()` when the Domain
+   value is empty (after stripping a leading dot), so `store()`'s
+   `.orElse(responseHost)` fires as intended.
 
 4. **`IntentUrlParser.extractPackageId` has no catch around
    `URLDecoder.decode`.** ⚡ *converged (code-simplifier #17, silent-failure-hunter #3)*
@@ -54,6 +66,11 @@ from different angles — treat those as higher confidence.
    2 #1) reclassifies as `TRANSPORT_ERROR` instead of the intended
    `NON_HTTP_SCHEME`/fallback-to-raw-id behavior its sibling `extractFallback`
    already has.
+   **Not reachable — no code change.** `java.net.URI` itself rejects a
+   malformed percent-escape (confirmed in jshell: `market://details?id=%zz`
+   throws `URISyntaxException`, "Malformed escape pair"), so `resolveLocation`
+   already returns `null` and short-circuits to a terminal response before
+   `extractPackageId` ever sees a string `URLDecoder.decode` can choke on.
 
 5. **`IntentUrlParser.extractFallback` swallows all exceptions with zero
    logging.** (silent-failure-hunter) Catches bare `Exception`
@@ -61,11 +78,29 @@ from different angles — treat those as higher confidence.
    that `URLDecoder.decode`/`URI.create` can throw, and logs nothing. A
    malformed `browser_fallback_url` silently becomes `null` with no way to
    tell "present but unparseable" from "genuinely absent."
+   **Fixed:** catch narrowed to `IllegalArgumentException` (what
+   `URLDecoder.decode`/`URI.create` actually throw), with a DEBUG log line
+   recording the raw value. Unlike #4, this one does happen in practice: a
+   decoded fallback URL containing a literal space, for instance, fails
+   `URI.create` (confirmed in jshell).
 
 6. **`UrlNormalizer.normalizeHttp` silently returns the un-normalized URI on
    failure**, with no logging (`UrlNormalizer.java:67-71`). This feeds
    loop-detection keys and cache keys, so a silent failure here could miss a
    loop or split a cache entry that should be shared.
+   **Fixed, and found worse than described on investigation:** the original
+   code used the multi-arg `URI` constructor, which takes *decoded* path/query
+   components — so it silently corrupted any redirect target carrying encoded
+   delimiters, not just the rare re-parse failure. Confirmed in jshell: a
+   tracker URL embedding another URL as
+   `?u=https%3A%2F%2Fx.com%2Fa%3Fb%3D1%26c%3D2` came out with the embedded
+   query merged into the outer one; `/a%2Fb` became `/a/b`; `?q=a%2Bb` became
+   `?q=a+b`. Rewrote to rebuild from the *raw* (still-encoded) components and
+   re-parse that string, so encoding survives untouched. Also fixed a second
+   bug: a host `getHost()` can't parse (e.g. one containing `_`) silently
+   dropped the entire authority — now returned unchanged instead. The
+   `URISyntaxException` catch should be unreachable now; kept, logging at WARN
+   instead of failing silently.
 
 7. **`UnshortenMapper`'s Javadoc claim is false for an edge case, and it's
    test-backed.** (comment-analyzer) It says a partial "always carries at
@@ -75,6 +110,12 @@ from different angles — treat those as higher confidence.
    .flagsSuspectedJsRedirectAsPartial` already asserts `finalUrl() == input`
    in that case. Real consequence: a v2 client can get `success:true` with
    `unshortened_url == shortened_url`.
+   **Fixed as a doc-only change** (this is intended behavior per `plan.md`'s
+   own compat-endpoint rationale, which already tells clients to compare
+   `unshortened_url` against `shortened_url`): reworded `UnshortenMapper`'s
+   Javadoc and the matching paragraph in `docs/plan.md` to say a partial
+   carries the best-known `final_url`, which can equal the input verbatim.
+   `Status.from` itself is untouched.
 
 ---
 

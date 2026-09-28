@@ -85,7 +85,6 @@ public class RedirectResolver {
         return computeHop(current, state, via, hopTimeoutMs)
                 .flatMap(computation -> {
                     state.addHop(computation.hop());
-                    edgeCache.put(current, state.profile().name(), computation);
                     return switch (computation.outcome()) {
                         case HopOutcome.Redirect r -> {
                             LOG.debugf("hop %d redirect: %s -> %s (status=%d, via=%s)",
@@ -112,7 +111,8 @@ public class RedirectResolver {
                 })
                 .orElseGet(() -> {
                     LOG.debugf("edge cache miss for %s (profile=%s), fetching", target, state.profile().name());
-                    return fetchHop(target, state, via, timeoutMs);
+                    return fetchHop(target, state, via, timeoutMs)
+                            .invoke(computation -> edgeCache.put(target, state.profile().name(), computation));
                 });
     }
 
@@ -144,7 +144,8 @@ public class RedirectResolver {
                 .onFailure(RedirectResolver::isStaleConnection).retry().atMost(1)
                 .memoize().indefinitely();
 
-        Uni<Map.Entry<String, HttpResponse<Buffer>>> headLeg = sendRequest(target, "HEAD", state, timeoutMs)
+        Uni<Map.Entry<String, HttpResponse<Buffer>>> headLeg = Uni.createFrom()
+                .deferred(() -> sendRequest(target, "HEAD", state, remainingHopMs(hopStartNanos, timeoutMs)))
                 .onFailure(RedirectResolver::isStaleConnection).retry().atMost(1)
                 .<Map.Entry<String, HttpResponse<Buffer>>>map(response -> new SimpleEntry<>("HEAD", response))
                 // A HEAD that fails outright (dl.flipkart.com's /s/ links: connection opens,
@@ -186,9 +187,15 @@ public class RedirectResolver {
                 .onFailure().recoverWithItem(t -> errorComputation(target, via, hopStartNanos, t, lastMethodAttempted.get()));
     }
 
-    /** Bounds a fallback/hedge GET to what's left of the hop's own timeout, not a fresh full window. */
+    /**
+     * Bounds a retried HEAD or a fallback/hedge GET to what's actually left of the hop's own
+     * timeout, not a fresh full window. Floors at 1ms, not {@code FLOOR_MS}: Vert.x's
+     * {@code request.timeout(ms)} treats 0 (or negative) as "no timeout," so a positive floor
+     * is required, but flooring at the hop-level {@code FLOOR_MS} let a request that had, say,
+     * 50ms left run for up to 400ms instead of failing fast.
+     */
     private long remainingHopMs(long hopStartNanos, long timeoutMs) {
-        return Math.max(ResolverLimits.FLOOR_MS, timeoutMs - elapsedMs(hopStartNanos));
+        return Math.max(1, timeoutMs - elapsedMs(hopStartNanos));
     }
 
     private Uni<HttpResponse<Buffer>> sendRequest(URI target, String method, WalkState state, long timeoutMs) {

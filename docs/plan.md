@@ -265,10 +265,11 @@ Drop-in replacement. Exactly three fields, nothing else on the success path.
 **`success` maps to `status != failed`. No other conditions.**
 
 Rationale: `failed` is already defined as "couldn't complete even the first hop," so
-a partial always carries at least one successful hop and a `final_url` better than the
-input. The compat shape can't express "incomplete," and a best-known URL serves the
-client far better than discarding it. `success: false` is therefore reserved strictly
-for real errors — bad input, DNS failure, transport error on hop 1.
+a partial carries the best-known `final_url` — usually better than the input, but not
+always: `js_suspected` on the very first hop is a partial whose `final_url` still equals
+the input verbatim. The compat shape can't express "incomplete," and the best-known URL
+still serves the client better than discarding it. `success: false` is therefore reserved
+strictly for real errors — bad input, DNS failure, transport error on hop 1.
 
 A client that cares whether the chain finished can compare `unshortened_url` against
 `shortened_url`, or use `/api/v1/resolve` and read `status` and `stop_reason`.

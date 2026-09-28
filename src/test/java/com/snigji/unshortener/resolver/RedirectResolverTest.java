@@ -184,6 +184,34 @@ class RedirectResolverTest {
     }
 
     @Test
+    void doesNotRewriteEdgeCacheEntryOnACacheHit() {
+        CountingEdgeCache counting = new CountingEdgeCache();
+        RedirectResolver countingResolver = new RedirectResolver();
+        countingResolver.webClient = resolver.webClient;
+        countingResolver.vertx = mutinyVertx;
+        countingResolver.guard = new AllowAllGuard();
+        countingResolver.edgeCache = counting;
+
+        Result first = await(countingResolver.resolve(uri("/start"), PROFILE));
+        assertEquals(3, counting.puts);
+        counting.puts = 0;
+
+        Result second = await(countingResolver.resolve(uri("/start"), PROFILE));
+        assertEquals(0, counting.puts);
+        assertEquals(first.finalUrl(), second.finalUrl());
+    }
+
+    private static final class CountingEdgeCache extends EdgeCache {
+        int puts = 0;
+
+        @Override
+        public void put(URI url, String profile, HopComputation computation) {
+            puts++;
+            super.put(url, profile, computation);
+        }
+    }
+
+    @Test
     void classifiesConnectionFailureAsTransportError() {
         Result result = await(resolver.resolve(URI.create("http://127.0.0.1:1/unreachable"), PROFILE));
         assertEquals(Status.FAILED, result.status());

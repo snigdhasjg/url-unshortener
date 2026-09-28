@@ -1,5 +1,7 @@
 package com.snigji.unshortener.resolver;
 
+import org.jboss.logging.Logger;
+
 import java.net.URI;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
@@ -13,6 +15,7 @@ import java.util.regex.Pattern;
  */
 public final class IntentUrlParser {
 
+    private static final Logger LOG = Logger.getLogger(IntentUrlParser.class);
     private static final String FALLBACK_KEY = "S.browser_fallback_url=";
     private static final Pattern MARKET_ID = Pattern.compile("[?&]id=([^&]+)", Pattern.CASE_INSENSITIVE);
 
@@ -39,7 +42,10 @@ public final class IntentUrlParser {
                 try {
                     String decoded = URLDecoder.decode(encoded, StandardCharsets.UTF_8);
                     return Optional.of(URI.create(decoded));
-                } catch (Exception e) {
+                } catch (IllegalArgumentException e) {
+                    // Present but unparseable (e.g. a decoded space or other illegal URI
+                    // character) — distinct from the fallback key being absent altogether.
+                    LOG.debugf("unparseable browser_fallback_url %s: %s", encoded, e.getMessage());
                     return Optional.empty();
                 }
             }

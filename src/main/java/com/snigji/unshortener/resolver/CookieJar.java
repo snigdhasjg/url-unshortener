@@ -37,7 +37,13 @@ public final class CookieJar {
             String trimmed = attr.trim();
             if (trimmed.regionMatches(true, 0, "Domain=", 0, 7)) {
                 String domain = trimmed.substring(7).trim();
-                return domain.startsWith(".") ? Optional.of(domain.substring(1)) : Optional.of(domain);
+                if (domain.startsWith(".")) {
+                    domain = domain.substring(1);
+                }
+                // An explicit-but-empty Domain (`Domain=;` or `Domain=.`) is present but
+                // unusable — treat it the same as absent so store() falls back to the
+                // responding host instead of filing the cookie under domain "".
+                return domain.isEmpty() ? Optional.empty() : Optional.of(domain);
             }
         }
         return Optional.empty();

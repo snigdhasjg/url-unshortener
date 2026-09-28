@@ -9,7 +9,9 @@ import jakarta.enterprise.context.ApplicationScoped;
 /**
  * Projects the rich {@link Result} onto the unshorten.me-compatible shape.
  * {@code success} maps to {@code status != failed}, no other condition — a partial
- * always carries at least one successful hop and a final_url better than the input.
+ * carries the best-known {@code final_url}, which can equal the input verbatim (e.g.
+ * {@code js_suspected} on the very first hop). A client that cares whether the chain
+ * actually advanced should compare {@code unshortened_url} against {@code shortened_url}.
  */
 @ApplicationScoped
 public class UnshortenMapper {

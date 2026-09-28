@@ -53,20 +53,49 @@ public final class UrlNormalizer {
      * scheme and host, strips default ports, drops the fragment. The path is left
      * exactly as-is — short codes are case-sensitive ({@code /AbC} != {@code /abc}).
      *
+     * <p>Rebuilds from the <em>raw</em> (still percent-encoded) components and
+     * reparses that string, rather than using the multi-arg {@link URI} constructor,
+     * which takes decoded components and would silently mangle a redirect target
+     * whose path or query carries encoded delimiters — e.g. a tracker URL embedding
+     * another URL as {@code ?u=https%3A%2F%2Fx.com%2Fa%3Fb%3D1%26c%3D2} would have its
+     * embedded query merged into the outer one.
+     *
      * <p>Only call this for http(s) targets. Other schemes (intent://, market://)
      * have syntax (semicolon-delimited fragments) that this would corrupt, and are
      * never re-normalized — they're terminal the moment they're seen.
      */
     public static URI normalizeHttp(URI uri) {
+        String host = uri.getHost();
+        if (host == null) {
+            // No parsed authority (opaque URI, or a host Java can't parse as one, e.g. one
+            // containing '_') — nothing safe to normalize; hand it back untouched rather
+            // than silently dropping the authority.
+            return uri;
+        }
         String scheme = uri.getScheme() == null ? null : uri.getScheme().toLowerCase(Locale.ROOT);
-        String host = uri.getHost() == null ? null : uri.getHost().toLowerCase(Locale.ROOT);
         int port = uri.getPort();
         if (("http".equals(scheme) && port == 80) || ("https".equals(scheme) && port == 443)) {
             port = -1;
         }
+        StringBuilder sb = new StringBuilder();
+        sb.append(scheme).append("://");
+        if (uri.getRawUserInfo() != null) {
+            sb.append(uri.getRawUserInfo()).append('@');
+        }
+        sb.append(host.toLowerCase(Locale.ROOT));
+        if (port != -1) {
+            sb.append(':').append(port);
+        }
+        if (uri.getRawPath() != null) {
+            sb.append(uri.getRawPath());
+        }
+        if (uri.getRawQuery() != null) {
+            sb.append('?').append(uri.getRawQuery());
+        }
         try {
-            return new URI(scheme, uri.getUserInfo(), host, port, uri.getPath(), uri.getQuery(), null);
+            return new URI(sb.toString());
         } catch (URISyntaxException e) {
+            LOG.warnf(e, "failed to re-parse normalized URI %s, returning original", sb);
             return uri;
         }
     }

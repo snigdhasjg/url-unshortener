@@ -30,6 +30,14 @@ class IntentUrlParserTest {
     }
 
     @Test
+    void emptyWhenFallbackDecodesToAnUnparseableUri() {
+        // %20 decodes to a literal space, which java.net.URI rejects as an illegal character.
+        String raw = "intent://scan/#Intent;scheme=https;package=com.example;"
+                + "S.browser_fallback_url=https%3A%2F%2Fexample.com%2Fa%20b;end";
+        assertTrue(IntentUrlParser.extractFallback(raw).isEmpty());
+    }
+
+    @Test
     void recognizesSchemes() {
         assertTrue(IntentUrlParser.isIntent("intent"));
         assertTrue(IntentUrlParser.isIntent("INTENT"));
