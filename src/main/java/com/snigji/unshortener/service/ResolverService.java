@@ -64,9 +64,7 @@ public class ResolverService {
      */
     private Result internalErrorResult(URI url) {
         String rendered = url.toString();
-        return new Result(rendered, rendered, new Destination.Unresolved(StopReason.INTERNAL_ERROR),
-                Status.from(StopReason.INTERNAL_ERROR, false), StopReason.INTERNAL_ERROR, List.of(), 0, 0, false,
-                false);
+        return Result.internalError(rendered, rendered, List.of(), 0);
     }
 
     /**

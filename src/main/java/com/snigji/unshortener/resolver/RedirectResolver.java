@@ -62,7 +62,7 @@ public class RedirectResolver {
     EdgeCache edgeCache;
 
     public Uni<Result> resolve(URI url, UaProfile profile) {
-        AtomicReference<WalkState> stateRef = new AtomicReference<>();
+        WalkState state = new WalkState(profile);
         long startNanos = System.nanoTime();
         // The whole body is wrapped in `deferred` for a reason beyond laziness: nothing
         // downstream of `step()` for hop 1 is itself wrapped in a Uni factory (unlike
@@ -71,15 +71,15 @@ public class RedirectResolver {
         // whose Javadoc describes a real implementation designed to reject/throw — would
         // run eagerly the moment `resolve` is called, before any Uni exists to attach a
         // failure handler to. `deferred` turns a thrown exception there into a Uni failure
-        // instead of letting it escape past every `onFailure()` in this class.
+        // instead of letting it escape past every `onFailure()` in this class. `state` itself
+        // needs no such protection — its constructor has no side effects — so it's built
+        // once, up front, and simply captured by both the lambda below and the recovery path.
         return Uni.createFrom().<Result>deferred(() -> {
-            WalkState state = new WalkState(profile);
-            stateRef.set(state);
             LOG.debugf("resolve start: url=%s profile=%s", url, profile.name());
             return step(url, state, HopVia.INITIAL)
                     .map(outcome -> buildResult(url, state, outcome, startNanos));
         }).onFailure().invoke(t -> LOG.errorf(t, "unexpected internal failure resolving %s", url))
-          .onFailure().recoverWithItem(t -> internalErrorResult(url, stateRef.get()));
+          .onFailure().recoverWithItem(t -> internalErrorResult(url, state));
     }
 
     /**
@@ -87,18 +87,10 @@ public class RedirectResolver {
      * per-hop recovery below — it exists for exactly the "never rely on fetchHop happening
      * to catch everything" case: a bug in {@code buildResult} itself, or an exception from
      * {@code guard.checkUrl} once a real {@link com.snigji.unshortener.security.Guard} is
-     * wired in. Reports whatever hops were already gathered, same as a normal partial —
-     * unlike {@link #buildResult}, there's no extra terminal hop to subtract here, since
-     * the crash happened before one could be constructed for the failing attempt.
+     * wired in. Reports whatever hops were already gathered, same as a normal partial.
      */
     private Result internalErrorResult(URI url, WalkState state) {
-        List<Hop> hops = state == null ? List.of() : state.hops();
-        boolean anyHopCompleted = !hops.isEmpty();
-        String finalUrl = hops.isEmpty() ? url.toString() : hops.getLast().url();
-        long budgetRemainingMs = state == null ? 0 : state.remainingMs();
-        return new Result(url.toString(), finalUrl, new Destination.Unresolved(StopReason.INTERNAL_ERROR),
-                Status.from(StopReason.INTERNAL_ERROR, anyHopCompleted), StopReason.INTERNAL_ERROR, hops, 0,
-                budgetRemainingMs, false, false);
+        return Result.internalError(url.toString(), lastKnownUrl(state, url), state.hops(), state.remainingMs());
     }
 
     private Uni<HopOutcome.Terminal> step(URI current, WalkState state, HopVia via) {
